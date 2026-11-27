@@ -34,5 +34,5 @@ python3 search/cycle_hunter.py --self-test --max-k 200
 echo "=== Track B C11 Glide-Hunter Self-Test & Smoke Sweep ==="
 python3 search/glide_hunter/run_glide_hunter.py --self-test --range-end 100000 --sieve-bits 20
 
-echo "=== Track B C11 M-Circuit Hunter Self-Test (m=2..6, u128/u256/u512) ==="
+echo "=== Track B C11 M-Circuit Hunter Self-Test (m=2..7, u128/u256/u512/u1024 + Mode 2 CF) ==="
 python3 search/mcircuit_hunter/run_mcircuit_hunter.py --self-test --threads 4
