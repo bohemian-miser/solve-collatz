@@ -48,8 +48,10 @@ def count_lean_theorems(root: pathlib.Path) -> list[dict[str, str]]:
 def parse_refuted(path: pathlib.Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
+    text = path.read_text(encoding="utf-8")
     entries: list[dict[str, str]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # Format 1: Markdown table rows `| ID | Conjecture | Status | Witness |`
+    for line in text.splitlines():
         if line.startswith("|") and not line.startswith("| ID") and not line.startswith("|---"):
             cols = [c.strip() for c in line.strip("|").split("|")]
             if len(cols) >= 4 and cols[0]:
@@ -59,6 +61,32 @@ def parse_refuted(path: pathlib.Path) -> list[dict[str, str]]:
                     "status": cols[2],
                     "witness": cols[3],
                 })
+    if entries:
+        return entries
+    # Format 2: Structured `### REF-NNN — Title` sections with `- **Status:**` / `- **Counterexample` bullets
+    blocks = re.split(r"(?m)^###\s+", text)
+    for blk in blocks[1:]:
+        lines = [l.strip() for l in blk.splitlines() if l.strip()]
+        if not lines:
+            continue
+        hdr = lines[0]
+        m = re.match(r"([A-Z]+-\d+)\s*[—–-]\s*(.+)", hdr)
+        if not m:
+            continue
+        rid, title = m.group(1).strip(), m.group(2).strip()
+        status = "REFUTED"
+        witness_parts: list[str] = []
+        for l in lines[1:]:
+            if l.startswith("- **Status:**"):
+                status = l.split(":**", 1)[1].strip().strip("`")
+            elif l.startswith("- **Counterexample") or l.startswith("- **Witness") or l.startswith("- **Barrier") or l.startswith("- **Result"):
+                witness_parts.append(l.split(":**", 1)[1].strip())
+        entries.append({
+            "id": rid,
+            "conjecture": title,
+            "status": status,
+            "witness": " ".join(witness_parts) or "(see frontier/REFUTED.md)",
+        })
     return entries
 
 
