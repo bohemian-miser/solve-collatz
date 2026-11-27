@@ -107,7 +107,7 @@ def python_orbit_stats(n: int) -> tuple[int, int, int]:
 def run_self_test(range_end: int) -> dict[str, Any]:
     """Verify classic Collatz records, Mersenne big-int fallback, and determinism."""
     test_range = max(range_end, 100_000)
-    data = run_engine(range_end=test_range, mersenne_max=100)
+    data = run_engine(range_end=test_range, mersenne_max=700)
     canon = data["canonical"]
     if canon["overflow_count"] != 0:
         raise AssertionError(f"Unexpected overflow_count={canon['overflow_count']}")
@@ -157,12 +157,20 @@ def run_self_test(range_end: int) -> dict[str, Any]:
         if (rec["stopping_time"], rec["total_steps"], int(rec["peak"])) != (py_stop, py_tot, py_peak):
             raise AssertionError(f"Python cross-check failed for n={n}")
 
-    # Mode 2 Mersenne & structured high-glide checks (including __uint128_t -> bigint fallback)
+    # Mode 2 Mersenne & structured high-glide checks (including __uint128_t -> bigint fallback & k=700 overflow test)
     m2 = canon["mode2_mersenne"]
-    if not m2["all_converged"] or m2["tested_count"] != 300:
+    if not m2["all_converged"] or m2["tested_count"] != 2100:  # 700 * 3 families
         raise AssertionError(f"Mode 2 check failed: {m2}")
     if canon["u128_bigint_fallbacks"] == 0:
-        raise AssertionError("Expected u128->bigint fallback to exercise at k <= 100")
+        raise AssertionError("Expected u128->bigint fallback to exercise at k <= 700")
+
+    # Validate strict RFC-8259 JSON serialization and parsing (reject NaN/Infinity)
+    raw_json_str = json.dumps(data, allow_nan=False)
+
+    def _reject_constant(val: str) -> None:
+        raise ValueError(f"Non-standard JSON constant: {val}")
+
+    json.loads(raw_json_str, parse_constant=_reject_constant)
 
     # Determinism check on 10k slice
     d1 = run_engine(range_end=10_000, mersenne_max=60)["deterministic_sha256"]

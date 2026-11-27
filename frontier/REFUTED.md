@@ -59,3 +59,20 @@ Every entry must include:
     | Max Peak Ratio (`≤ 10⁸`) | `80,049,391` | `396` | `572` | `2,185,143,829,170,100` | `27,297,444.76×` |
   - **Structured High-Glide Stress Families (`1 ≤ k ≤ 120`, `360` seeds):** All `2^k - 1`, `3·2^k - 1`, and `27·2^k - 1` converge to `1` (max `σ = 810` at `2^{113}-1`, max `τ = 1649` at `2^{116}-1`, max glide `5.203×10^{21}×` at `2^{117}-1`, max `196`-bit peak).
 - **Takeaway:** Any candidate Track A stopping-time bound `σ(n) ≤ f(n)` or peak bound can be red-teamed directly against the `63,728,127` / `80,049,391` / `2^{117}-1` stress seeds (`python3 search/barrier_redteam.py --check-stopping-bound ...`); Track B searches must look above `10⁸` or target structured Diophantine cycle families (`DISPROVE-002`).
+
+### `REF-006` — Expanded Track B Phase 2 divergence, cycle, or infinite stopping-time anomaly in `1 ≤ n ≤ 5·10⁸` or Mersenne stress families `2^k·{1,3,27} - 1` (`k ≤ 500`)
+- **Claim:** There exists a positive integer `1 ≤ n ≤ 5·10⁸` or a structured seed `n ∈ {2^k - 1, 3·2^k - 1, 27·2^k - 1}` (`1 ≤ k ≤ 500`) that fails to drop strictly below `n` (or diverges / enters a non-trivial cycle).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` counterexamples across `5·10⁸` integers + `1,500` structured seeds up to `k = 500`, with CI `--self-test` additionally verifying Mersenne families up to `k = 700` under strict RFC-8259 JSON serialization; `0` silent `__uint128_t` overflows; `overflow_count = 0`; `u128_bigint_fallbacks = 1,264`; `deterministic_sha256 = edf01115c8117f6dabf6726f4bfa78b815c2c278bb6ff51d70cbfcbdcef9b078`).
+- **Witness / Reproducer:**
+  ```bash
+  python3 search/glide_hunter/run_glide_hunter.py --range-end 500000000 --mersenne-max 500 --threads 16 --log-json /tmp/disprove003_p2_5e8.json
+  ```
+- **Sieve & Arithmetic Audit:** mod-$2^{16}$ affine drop table covers `63,422 / 65,536` residues (`96.77%`, `483,808,039` fast-skips in `1..5·10⁸`, max pre-drop threshold `24`, max pre-drop ratio `115.332`); throughput `~775M–850M seeds/s` (`~0.64s` Mode 1, `~0.11s` Mode 2, 16 threads).
+- **Verified Record Summary (`1 ≤ n ≤ 5·10⁸`):**
+  | Record Type | Peak Seed `n` | Stopping Time `σ(n)` | Total Steps `τ(n)` | Peak Value | Peak Ratio `peak/n` |
+  |---|---:|---:|---:|---:|---:|
+  | Max Stopping Time (`≤ 5·10⁸`) | `217,740,015` | `644` | `793` | `2,516,021,527,120` | `11,555.16×` |
+  | Max Total Steps (`≤ 5·10⁸`) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
+  | Max Peak Ratio (`≤ 5·10⁸`) | `319,804,831` | `427` | `592` | `1,414,236,446,719,942,480` | `4,422,186,001.06×` |
+- **Structured High-Glide Stress Families (`1 ≤ k ≤ 500`, `1,500` seeds):** All `2^k - 1`, `3·2^k - 1`, and `27·2^k - 1` converge to `1` (max `σ = 3,185` at `2^{485}-1`, max `τ = 6,748` at `2^{500}-1`, max glide ratio at `2^{493}-1` with `log2_glide_ratio = 294.255688` [`788`-bit peak]; global `max_peak_bits = 799` attained at `27·2^{500}-1`).
+- **Takeaway:** Phase 2 search confirms zero anomalies up to `5·10⁸` and `k = 500`, validating finite stopping times and strict numerical overflow safety (`[S2]` fixed via exact `log2_glide_ratio` and `peak_bits`).
