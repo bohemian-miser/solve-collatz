@@ -26,3 +26,4 @@ public import Collatz.Prove.Ergodic.ExceptionalDensity
 public import Collatz.Prove.Ergodic.SharperChernoff
 public import Collatz.Prove.Diophantine.MCircuit
 public import Collatz.Prove.Diophantine.TwoCircuitConvergents
+public import Collatz.Prove.Diophantine.MCircuitLifted
