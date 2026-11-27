@@ -197,3 +197,32 @@ Every entry must include:
   | Max Total Steps (`n ≤ 249,999,999` [`tau_exact_up_to`]) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
 - **Structured High-Glide Stress Families (`1 ≤ k ≤ 2000`, `23,999` seeds across 12 families):** All `2^k·{1,3,5,7,9,27,703,9663,77671,319804831} - 1`, `2^k + 1`, and `2^k - 3` (`k ≥ 2`) converge to `1` (`max σ = 13,711` at `7·2^{1900}-1`, `max τ = 28,128` at `5·2^{1994}-1`, `max log2_glide_ratio = 1175.398689` at `3·2^{2000}-1`, global `max_peak_bits = 3,201` attained at `319,804,831·2^{2000}-1`).
 - **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification by `2×` over `REF-010` (`10×` over `REF-008`) to `10¹⁰` (`2.199B seeds/s` on 4 pinned cores via mod-$2^{24}$ uncovered-residue jump sieve + 3-tier `u64/u128/bigint_t` arithmetic) and `23,999` structured lifts up to `k ≤ 2000` (`3,201`-bit peaks, `0` overflows).
+
+### `REF-013` — Track B Phase 5 `1024`-bit multi-limb, canonical `7`-circuit elimination (`m = 2..7`), and exact CF convergent-window cycle hunt (`K ≤ 15,601`)
+- **Claim:** There exists a non-trivial positive integer cycle `n > 1` (`n_j ≥ 3` at every block entry) satisfying `(2^S - 3^K) n_0 = C(v)` across any of:
+  1. **Mode 1 (`m = 2..7` Simons–de Weger positive band `2^S · 3^m < 4^m · 3^K`):**
+     - Canonical `2`-circuits with `2 ≤ K ≤ 320` (`2,633,051` candidates; `S ≤ 508`, breaking the `u512_t` `K = 256` barrier via `u1024_t`),
+     - Canonical `3`-circuits with `3 ≤ K ≤ 135` (`313,138,260` candidates; `S ≤ 216`),
+     - Canonical `4`-circuits with `4 ≤ K ≤ 74` (`3,406,696,053` candidates),
+     - Canonical `5`-circuits with `5 ≤ K ≤ 46` (`5,697,662,721` candidates),
+     - Canonical `6`-circuits with `6 ≤ K ≤ 34` (`5,608,243,177` candidates),
+     - Canonical `7`-circuits with `7 ≤ K ≤ 26` (`1,269,132,755` candidates; exact `2187 · 2^S < 16384 · 3^K` band — first exhaustive canonical `7`-circuit elimination).
+  2. **Mode 2 (Exact `log₂(3)` Continued-Fraction Convergent-Window Cycle Hunter):**
+     - All `38` CF upper convergents, semiconvergents, and `p_even + 1` `1`-circuits up to `K ≤ 15,601` (`S ≤ 24,727`),
+     - All canonical `2`-circuits at convergent denominators `K ∈ {5, 12, 41, 53, 306, 665}` at `S = S_min(K) ∈ {8, 20, 65, 85, 485, 1055}` (`157,602` candidates via exact `mod D`, including `u2048_t` at `K = 665`),
+     - All canonical `3`-circuits at convergent denominators `K ∈ {41, 53, 306}` in the Simons band (`S ∈ {65, 66, 85, 485, 486}`; `489,966,484` candidates via exact `mod (2^S - 3^K)`).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` non-trivial positive cycles across `16,787,630,141` candidates [`16,297,506,017` Mode 1 + `490,124,124` Mode 2], `overflow_guard_skips = 0`; Mode 1 `deterministic_sha256 = e542c4daa7acbf447a37103cb4eaecdbeb20cb44d8afffeba5abc193267819c6`; Mode 2 `deterministic_sha256 = 7224952741a50eadb052c9a037bc8e66f845d551edafc0bc2ecc9e1768501e11`; combined `deterministic_sha256 = 3878f8f99f217f4ff7bdfbfa57808dcd54e0d997d4a39c61564d4f05f33a0a10`; full log at `search/logs/mcircuit_sweep_ref013.json`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 116-119 python3 search/mcircuit_hunter/run_mcircuit_hunter.py --k2-max 320 --k3-max 135 --k4-max 74 --k5-max 46 --k6-max 34 --k7-max 26 --bound simons --convergent-window --cw-k306-mode full --threads 4 --json-out search/logs/mcircuit_sweep_ref013.json
+  ```
+- **Arithmetic & Cross-Verification Audit:**
+  - C11 engine (`-O3 -Wall -Wextra -Werror -std=c11 -pthread`, Mode 1 `90.787992s`, Mode 2 `19.328346s` on 4 pinned cores `116–119`) with 4-tier dispatch `u128` (`K ≤ 80, S ≤ 127`) → `u256_t` (`K ≤ 160, S ≤ 255`) → `u512_t` (`K ≤ 256, S ≤ 511`) → `u1024_t` (`K ≤ 512, S ≤ 1023`), exact `u2048_t` precomputation/hit-recovery/`K=665` solver, and strict RFC-8259 JSON via `scripts/native_cache.py`.
+  - Bit-for-bit `deterministic_sha256` equivalence verified across `u128 == u256 == u512 == u1024` on `m = 2..7` (`75c3c6bc1dbc58ad`), exact `u512 == u1024` on `m = 3` (`K = 306, S = 485`), independent pure-Python exact-bigint Simons enumeration on `m = 2..7` including `m = 7` (`K ≤ 11`: `1,209` and `K ≤ 14`: `98,163` candidates), Mode 2 exact `C(v) % (2^S - 3^K)` cross-verification against Python on `K ∈ {5, 12, 41, 53, 306, 665}` (`157,602` `2`-circuits + `417,356` `3`-circuits at `K ∈ {41, 53, 306 structured}`), `3n - 1` (`n = 5`, `n = 17`) and `K ∈ {41, 53, 306}` synthetic divisor hit recovery with `NontrivialCycleCert` schema validation (`m = 1..7`), and `threads = 1 == threads = 4 == ASan+UBSan` bit-identical `deterministic_sha256` (`d126954d859f7ea4`, `0` sanitizer errors).
+- **Closest 2-Adic Rational Near-Misses:**
+  - Mode 1 `2`-circuit (`K = 302, S = 479`): `k_vec = [117, 185]`, `l_vec = [157, 22]`, `dist_approx = 8.572464358801e-08`
+  - Mode 1 `7`-circuit (`K = 26, S = 44`): `k_vec = [1, 3, 3, 6, 4, 4, 5]`, `l_vec = [9, 2, 2, 2, 3, 5, 2]`, `dist_approx = 6.252358664065e-11`
+  - Mode 2 `1`-circuit (`K = 665, S = 1055`, `even_convergent_plus1_n8`): `dist_approx = 8.731393858193e-05`
+  - Mode 2 `2`-circuit (`K = 306, S = 485`): `k_vec = [136, 170]`, `l_vec = [167, 14]`, `dist_approx = 1.674890021252e-06`
+  - Mode 2 `3`-circuit (`K = 306, S = 486`): `k_vec = [65, 135, 106]`, `l_vec = [30, 76, 77]`, `dist_approx = 3.159228269225e-10`
+- **Takeaway:** Breaks the `K = 256 / S = 511` `u512_t` ceiling via `u1024_t` (`K ≤ 512, S ≤ 1023`), introduces exhaustive canonical `7`-circuit elimination (`m = 7, K ≤ 26`), and closes the small-denominator `log₂(3)` CF convergent danger zone (`1`-circuits up to `K ≤ 15,601`, all `2`-circuits at `K ∈ {5, 12, 41, 53, 306, 665}`, and all `3`-circuits at `K ∈ {41, 53, 306}`) across `16.788B` total candidates (`0` skips, `0` hits).
