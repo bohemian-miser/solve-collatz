@@ -22,4 +22,5 @@ public import Collatz.Prove.Diophantine.TwoCircuit
 public import Collatz.Known.TaoBridge
 public import Collatz.Prove.Diophantine.ThreeCircuit
 public import Collatz.Prove.Ergodic.ExceptionalDensity
+public import Collatz.Prove.Ergodic.SharperChernoff
 public import Collatz.Prove.Diophantine.MCircuit
