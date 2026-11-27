@@ -18,3 +18,4 @@ public import Collatz.Known.CycleLengthBounds
 public import Collatz.Prove.Diophantine.TwoCircuit
 public import Collatz.Known.TaoBridge
 public import Collatz.Prove.Diophantine.ThreeCircuit
+public import Collatz.Prove.Ergodic.ExceptionalDensity
