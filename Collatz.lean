@@ -11,3 +11,4 @@ public import Collatz.Core.Syracuse
 public import Collatz.Disprove.Cert
 public import Collatz.Known.TerrasParity
 public import Collatz.Known.SteinerCircuit
+public import Collatz.Prove.Automata.ModularDescent

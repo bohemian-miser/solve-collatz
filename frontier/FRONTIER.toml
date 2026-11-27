@@ -106,11 +106,12 @@ barrier_notes = "Must fail on 3n-1 (5-cycle) and Z_<0 (-5, -17 cycles) via exact
 [[node]]
 id = "PROVE-C1"
 track = "Prove"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Track A (Automata/Sieve): verified modular covering & residue-class descent certificates"
+lean_file = "Collatz/Prove/Automata/ModularDescent.lean"
 target_file = "Collatz/Prove/Automata/"
 needs = ["CORE-003"]
-barrier_notes = "Must quantify uncovered density cleanly; cannot claim full covering without non-local invariant."
+barrier_notes = "Quantifies covered/uncovered density (3/4 mod 4, 13/16 mod 16, 237/256 mod 256) and certifies REF-002 incompleteness on 2^K - 1; cannot claim full covering without non-local invariant."
 
 [[node]]
 id = "DISPROVE-002"
