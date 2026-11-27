@@ -77,7 +77,8 @@ typedef struct {
     uint32_t stopping_time;
     uint32_t total_steps;
     uint32_t peak_bits;
-    double peak_ratio_approx;
+    double log2_glide_ratio;
+    double peak_ratio;
     bool used_bigint_fallback;
     bool verified_hits_one;
     char seed_dec[128];
@@ -830,6 +831,33 @@ static double bi_to_double(const bigint_t *a) {
     return acc;
 }
 
+/* Returns log2(a), or 0.0 as a JSON-safe sentinel when a == 0. */
+static double bi_log2(const bigint_t *a) {
+    if (a->len == 0) {
+        return 0.0;
+    }
+    size_t top_idx = a->len - 1;
+    uint64_t top_val = a->limbs[top_idx];
+    if (top_val == 0ULL) {
+        return 0.0;
+    }
+    uint32_t bits = bi_bitlen(a);
+    if (bits == 0) {
+        return 0.0;
+    }
+    int clz = __builtin_clzll(top_val);
+    uint64_t mantissa_bits = 0ULL;
+    if (clz <= 63 - 53) {
+        mantissa_bits = top_val >> (63 - clz - 53);
+    } else {
+        int needed = 53 - (63 - clz);
+        uint64_t hi = top_val << needed;
+        uint64_t lo = (top_idx > 0) ? (a->limbs[top_idx - 1] >> (64 - needed)) : 0ULL;
+        mantissa_bits = hi | lo;
+    }
+    double frac = (double)mantissa_bits / (double)(1ULL << 53);
+    return (double)(bits - 1) + log2(frac);
+}
 static void bi_to_dec(const bigint_t *a, char *buf, size_t bufsz) {
     if (a->len == 0) {
         snprintf(buf, bufsz, "0");
@@ -922,7 +950,17 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k,
             out->stopping_time = stop;
             out->total_steps = total;
             out->peak_bits = bitlen128(peak);
-            out->peak_ratio_approx = (double)peak / (double)n;
+            bigint_t peak_bi;
+            bi_from_u64(&peak_bi, (uint64_t)peak);
+            if (peak > (u128)UINT64_MAX) {
+                peak_bi.limbs[0] = (uint64_t)peak;
+                peak_bi.limbs[1] = (uint64_t)(peak >> 64);
+                peak_bi.len = 2;
+            }
+            double l2_seed = bi_log2(&seed_bi);
+            double l2_peak = bi_log2(&peak_bi);
+            out->log2_glide_ratio = l2_peak - l2_seed;
+            out->peak_ratio = (out->log2_glide_ratio < 996.0) ? exp2(out->log2_glide_ratio) : 0.0;
             out->used_bigint_fallback = false;
             out->verified_hits_one = true;
             u128_to_str(peak, out->peak_dec, sizeof(out->peak_dec));
@@ -988,7 +1026,10 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k,
     out->stopping_time = stop;
     out->total_steps = total;
     out->peak_bits = bi_bitlen(&peak);
-    out->peak_ratio_approx = bi_to_double(&peak) / bi_to_double(&seed_bi);
+    double l2_seed = bi_log2(&seed_bi);
+    double l2_peak = bi_log2(&peak);
+    out->log2_glide_ratio = l2_peak - l2_seed;
+    out->peak_ratio = (out->log2_glide_ratio < 996.0) ? exp2(out->log2_glide_ratio) : 0.0;
     out->verified_hits_one = true;
     bi_to_dec(&peak, out->peak_dec, sizeof(out->peak_dec));
     return true;
@@ -1044,9 +1085,9 @@ static void write_json_output(FILE *fp, const mode1_result_t *m1, bool run_m2,
 
     if (run_m2) {
         uint32_t max_stop = 0U, max_tot = 0U, max_pbits = 0U;
-        double max_pratio = 0.0;
-        uint64_t max_stop_k = 0U, max_tot_k = 0U, max_pratio_k = 0U;
-        char max_stop_fam[32] = "", max_tot_fam[32] = "", max_pratio_fam[32] = "";
+        double max_l2 = 0.0;
+        uint64_t max_stop_k = 0U, max_tot_k = 0U, max_l2_k = 0U;
+        char max_stop_fam[32] = "", max_tot_fam[32] = "", max_l2_fam[32] = "";
         bool all_ok = true;
 
         for (size_t i = 0; i < m2_count; i++) {
@@ -1067,10 +1108,10 @@ static void write_json_output(FILE *fp, const mode1_result_t *m1, bool run_m2,
             if (r->peak_bits > max_pbits) {
                 max_pbits = r->peak_bits;
             }
-            if (r->peak_ratio_approx > max_pratio) {
-                max_pratio = r->peak_ratio_approx;
-                max_pratio_k = r->k;
-                snprintf(max_pratio_fam, sizeof(max_pratio_fam), "%s", r->family);
+            if (r->log2_glide_ratio > max_l2) {
+                max_l2 = r->log2_glide_ratio;
+                max_l2_k = r->k;
+                snprintf(max_l2_fam, sizeof(max_l2_fam), "%s", r->family);
             }
         }
 
@@ -1086,22 +1127,29 @@ static void write_json_output(FILE *fp, const mode1_result_t *m1, bool run_m2,
                     ", \"value\": %u},\n",
                 max_tot_fam, max_tot_k, max_tot);
         fprintf(fp, "      \"max_peak_ratio\": {\"family\": \"%s\", \"k\": %" PRIu64
-                    ", \"value\": %.6f, \"max_peak_bits\": %u},\n",
-                max_pratio_fam, max_pratio_k, max_pratio, max_pbits);
+                    ", \"log2_glide_ratio\": %.6f, \"max_peak_bits\": %u},\n",
+                max_l2_fam, max_l2_k, max_l2, max_pbits);
         fprintf(fp, "      \"samples\": [\n");
         /* Emit compact deterministic summary of notable & boundary records. */
         size_t emitted = 0;
         for (size_t i = 0; i < m2_count; i++) {
             const mersenne_record_t *r = &m2_recs[i];
-            if (r->k <= 4U || r->k == mersenne_max || (r->k % 10U == 0U) ||
-                (strcmp(r->family, max_pratio_fam) == 0 && r->k == max_pratio_k)) {
+            if (r->k <= 4U || r->k == mersenne_max || (r->k % 50U == 0U) ||
+                (strcmp(r->family, max_l2_fam) == 0 && r->k == max_l2_k)) {
+                char ratio_buf[64];
+                if (r->peak_ratio > 0.0 && isfinite(r->peak_ratio)) {
+                    snprintf(ratio_buf, sizeof(ratio_buf), "%.6e", r->peak_ratio);
+                } else {
+                    snprintf(ratio_buf, sizeof(ratio_buf), "null");
+                }
                 fprintf(fp,
                         "%s        {\"family\": \"%s\", \"k\": %u, \"seed_bits\": %u, "
                         "\"stopping_time\": %u, \"total_steps\": %u, \"peak_bits\": %u, "
-                        "\"peak_ratio\": %.6f, \"bigint_fallback\": %s, \"seed\": \"%s\", "
+                        "\"log2_glide_ratio\": %.6f, \"peak_ratio\": %s, \"bigint_fallback\": %s, \"seed\": \"%s\", "
                         "\"peak\": \"%s\"}",
                         (emitted > 0) ? ",\n" : "", r->family, r->k, r->seed_bits,
-                        r->stopping_time, r->total_steps, r->peak_bits, r->peak_ratio_approx,
+                        r->stopping_time, r->total_steps, r->peak_bits, r->log2_glide_ratio,
+                        ratio_buf,
                         r->used_bigint_fallback ? "true" : "false", r->seed_dec, r->peak_dec);
                 emitted++;
             }
