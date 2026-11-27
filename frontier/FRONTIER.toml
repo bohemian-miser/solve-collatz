@@ -87,11 +87,12 @@ barrier_notes = "Proved (pure Lean 4 core, zero Mathlib): OrbitMinLe/EventuallyB
 [[node]]
 id = "PROVE-A1"
 track = "Prove"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Track A (Ergodic/Tao): sharpen exceptional-set bounds beyond logarithmic density 1"
+lean_file = "Collatz/Prove/Ergodic/ExceptionalDensity.lean"
 target_file = "Collatz/Prove/Ergodic/"
 needs = ["KNOWN-004"]
-barrier_notes = "Must explain why exceptional zero-density set cannot hide a positive cycle or divergent orbit."
+barrier_notes = "Proved (pure Lean 4 core, zero Mathlib): HasStoppingTimeLe bounded stopping time; quantitative Chernoff block/prefix exponential decay (3125 < 3456) on [A, A+2^(5*m)) and [0, N); explicit constructive natural-density modulus explicitDensityThreshold D = 2^(119*bitLen(4*D)) for natExceptionalCount; unconditional power-saving bound HasPowerSavingDensityOne HasFiniteStoppingTime 237 238 (count^238 < N^237 for N >= 2^715); exact Track A <-> Challenge.lean equivalences (including ¬ HasFiniteStoppingTime 1); and formal Barriers 4 & 5 density-vs-universality obstructions proving that IsExpSparse O(log N) sparse sets (any finite cycle orbit cycleOrbitList OR any exponentially divergent orbit 2^(t/C) <= collatzIter t n) beat every subpolynomial exceptional-set bound HasSubpolyExceptionalSet (N^(a/b)) and thus cannot be ruled out by quantitative density bounds alone without Diophantine (PROVE-B1) input."
 
 [[node]]
 id = "PROVE-B1"
