@@ -113,3 +113,24 @@ Every entry must include:
   | Literature Total-Steps Stress Anchor (`> tau_exact_up_to`, Python-verified) | `670,617,279` | `29` | `986` | `966,616,035,460` | `1,441.38×` |
 - **Structured High-Glide Stress Families (`1 ≤ k ≤ 1000`, `7,000` seeds across 7 families):** All `2^k·{1,3,27,703,9663,77671,319804831} - 1` converge to `1` (`max σ = 6,786` at `2^{997}-1`, `max τ = 14,241` at `2^{998}-1`, `max log2_glide_ratio = 592.436188` at `2^{997}-1` [`1,590`-bit peak], global `max_peak_bits = 1,617` attained at `319,804,831·2^{1000}-1`).
 - **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification to `10⁹` and structured `k ≤ 1000` (`1,617`-bit peaks) with `794M seeds/s` on 8 cores; `search/barrier_redteam.py` now includes all `≤ 10⁹` record stress seeds (including `217,740,015`, `319,804,831`, and `670,617,279`).
+
+### `REF-009` — Track B Phase 3 `256`-bit multi-limb `m`-circuit elimination (`m = 2` `K ≤ 160`, `m = 3` `K ≤ 100`, `m = 4` `K ≤ 60`, `m = 5` `K ≤ 38`)
+- **Claim:** There exists a non-trivial positive integer cycle `n > 1` (`n_j ≥ 3` at every block entry) satisfying `(2^S - 3^K) n_0 = C(v)` across any canonical `m`-circuit in the exact Simons–de Weger positive band `S_min(K) ≤ S < K log₂(3) + m log₂(4/3)` (`2^S · 3^m < 4^m · 3^K`) for:
+  1. Canonical `2`-circuits with `2 ≤ K ≤ 160` (`325,481` candidates; `S ≤ 254`),
+  2. Canonical `3`-circuits with `3 ≤ K ≤ 100` (`68,007,503` candidates; `S ≤ 160`),
+  3. Canonical `4`-circuits with `4 ≤ K ≤ 60` (`770,929,000` candidates),
+  4. Canonical `5`-circuits with `5 ≤ K ≤ 38` (`929,830,342` candidates; exact `243 · 2^S < 1024 · 3^K` band).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` non-trivial positive cycles across `1,769,092,326` canonical `m`-circuits, `overflow_guard_skips = 0`; `deterministic_sha256 = 3f981c8c64ef82de10aa347559078ffc4e9c876e267d587912ababc6dd32f550`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 12-15 python3 search/mcircuit_hunter/run_mcircuit_hunter.py --k2-max 160 --k3-max 100 --k4-max 60 --k5-max 38 --bound simons --threads 4 --json-out /tmp/disprove002_p3_sweep.json
+  ```
+- **Arithmetic & Cross-Verification Audit:**
+  - C11 engine (`-O3 -Wall -Wextra -Werror -std=c11 -pthread`, `elapsed_seconds = 7.754753` on 4 pinned cores) combining `u128` (`K ≤ 80, S ≤ 127`) with overflow-free multi-limb `u256_t` (`K ≤ 160, S ≤ 255`) and exact `u640_t` precomputation/hit recovery.
+  - Bit-for-bit `deterministic_sha256` equivalence verified between `u256` (`--force-u256`) and `u128` on `m = 2 (K ≤ 80)`, `m = 3 (K ≤ 40)`, `m = 4 (K ≤ 20)` (`sha256 = cd408a958a3a7427...`), exact `m = 5 (K ≤ 12, 9,875 candidates)` cross-verification against independent pure-Python Simons enumeration, exact `REF-007` count match (`641,049,809` on `m = 2..4`), and bit-for-bit identical `deterministic_sha256` across `threads = 1`, `threads = 4`, and `ASan+UBSan` (`9,819,716`-candidate subset, `sha256 = 309c457c586c53ab...`, `0` sanitizer findings).
+- **Closest 2-Adic Rational Near-Misses:**
+  - `2`-circuit (`K = 126, S = 200`): `k_vec = [24, 102]`, `l_vec = [16, 60]`, `dist_approx = 2.766715634313e-06`
+  - `3`-circuit (`K = 54, S = 86`): `k_vec = [12, 25, 17]`, `l_vec = [10, 8, 17]`, `dist_approx = 4.758234805174e-09` (best `u256` shell `K = 99, S = 157`: `k_vec = [9, 21, 69]`, `l_vec = [5, 46, 10]`, `dist_approx = 1.446920717900e-08`)
+  - `4`-circuit (`K = 52, S = 83`): `k_vec = [10, 14, 13, 15]`, `l_vec = [16, 6, 3, 10]`, `dist_approx = 1.973063951232e-09`
+  - `5`-circuit (`K = 38, S = 62`): `k_vec = [2, 24, 2, 6, 4]`, `l_vec = [2, 10, 4, 8, 5]`, `dist_approx = 6.098330324666e-10`
+- **Takeaway:** Breaks the `K = 80 / S = 127` `u128` ceiling via `u256_t` (`K ≤ 160 / S ≤ 255`), doubles `2`-circuit elimination to `K ≤ 160`, pushes `3`-circuits to `K ≤ 100`, pushes `4`-circuits to `K ≤ 60`, and exhaustively refutes canonical `5`-circuits up to `K ≤ 38` (`1.769B` total candidates, `0` skips, `0` hits); any hit automatically emits a kernel-ready `SolveCollatz.Disprove.NontrivialCycleCert`. Further reach (`m ≥ 6` or `K > 160`) requires LLL/lattice reduction or `u512` modular arithmetic.
