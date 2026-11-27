@@ -14,6 +14,7 @@ public import Collatz.Known.TerrasParity
 public import Collatz.Known.TerrasDensity
 public import Collatz.Known.SteinerCircuit
 public import Collatz.Prove.Automata.ModularDescent
+public import Collatz.Prove.Automata.SieveObstruction
 public import Collatz.Known.CycleLengthBounds
 public import Collatz.Prove.Diophantine.TwoCircuit
 public import Collatz.Known.TaoBridge
