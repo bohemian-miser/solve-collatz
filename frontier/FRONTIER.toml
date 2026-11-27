@@ -109,10 +109,10 @@ id = "PROVE-C1"
 track = "Prove"
 status = "IN_PROGRESS"
 title = "Track A (Automata/Sieve): verified modular covering & residue-class descent certificates"
-lean_file = "Collatz/Prove/Automata/SieveObstruction.lean"
+lean_file = "Collatz/Prove/Automata/ModularDescent.lean, Collatz/Prove/Automata/SieveObstruction.lean, Collatz/Prove/Automata/Mod65536Sieve.lean"
 target_file = "Collatz/Prove/Automata/"
 needs = ["CORE-003", "CORE-004"]
-barrier_notes = "ModularDescent (3/4 mod 4, 13/16 mod 16, 237/256 mod 256) + SieveObstruction (960/1024 mod 1024, 3870/4096 mod 4096, unconditional n>=2 covered descent, density monotonicity, exponential survival 2^m <= u(3m+1), Z_2 projective towers from -5 & -19/11, Barrier 2 5n+1 contrast); cannot claim 100% covering without non-local invariant (REF-002)."
+barrier_notes = "Phase 1 (ModularDescent.lean): 3/4 mod 4, 13/16 mod 16, 237/256 mod 256. Phase 2 (SieveObstruction.lean): 960/1024 mod 1024, 3870/4096 mod 4096, unconditional n>=2 covered descent, density monotonicity, exponential survival 2^m <= u(3m+1), Z_2 projective towers from -5 & -19/11, Barrier 2 5n+1 contrast. Phase 3 (Mod65536Sieve.lean, pure Lean 4 core, zero native_decide): recursive dyadic affine covering tree (dyadicUncovered, dyadicStrongCheck) with exact counting soundness bridged to EliahouLifted (< 2^20) certifying 63,422/65,536 (96.7743%) mod 2^16 and 254,649/262,144 (97.1409%, matching REF-008 glide_hunter) mod 2^18 unconditionally for all n >= 2; supermultiplicative survivor law (uncoveredCount K * uncoveredCount B <= uncoveredCount (K + B)) yielding 7495^m <= uncoveredCount (18*m) and 2^(12*m) <= uncoveredCount (18*m); Z_2 projective tower from -65/49; and explicit Barrier 1-5 separations (incl. 5n+1 mod-65,536 collapse 50,216 vs 63,422). Cannot reach 100% finite-depth covering without a non-local invariant (REF-002)."
 
 [[node]]
 id = "DISPROVE-002"

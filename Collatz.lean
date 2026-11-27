@@ -16,6 +16,7 @@ public import Collatz.Known.SteinerCircuit
 public import Collatz.Known.SteinerConvergents
 public import Collatz.Prove.Automata.ModularDescent
 public import Collatz.Prove.Automata.SieveObstruction
+public import Collatz.Prove.Automata.Mod65536Sieve
 public import Collatz.Known.CycleLengthBounds
 public import Collatz.Known.EliahouConvergents
 public import Collatz.Known.EliahouLifted
