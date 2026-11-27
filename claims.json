@@ -1,5 +1,11 @@
 {
   "schema": "solve-anything-claims/v1",
-  "claims": {},
-  "updated_at": "2026-11-27T11:57:49Z"
+  "claims": {
+    "KNOWN-003": {
+      "user": "bohemian-miser",
+      "claimed_at": "2026-11-27T12:02:35Z",
+      "expires_at": "2026-11-28T12:02:35Z"
+    }
+  },
+  "updated_at": "2026-11-27T12:02:35Z"
 }
