@@ -96,11 +96,12 @@ barrier_notes = "Must explain why exceptional zero-density set cannot hide a pos
 [[node]]
 id = "PROVE-B1"
 track = "Prove"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Track A (Diophantine): k-cycle / m-circuit non-existence via linear forms in logarithms & p-adic heights"
+lean_file = "Collatz/Prove/Diophantine/TwoCircuit.lean"
 target_file = "Collatz/Prove/Diophantine/"
 needs = ["KNOWN-003"]
-barrier_notes = "Must fail on 3n-1 (5-cycle) and Z_<0 (-5, -17 cycles) via exact archimedean positivity."
+barrier_notes = "2-circuit formalization (Simons 2005): exact numerator C_2, S = minHalvings k via 9*2^S < 16*3^k, exponential gap 4^k*(2^S - 3^k)^2 < 16*3^(3k), kernel-verified elimination for k1 + k2 <= 29, and non-vacuous conditional Simons-Baker reduction for k > 29 (eliminating all small-k exceptions k in {13, 15, 17, 22, 29}). Separated from Barrier 1 (3n-1 at 5, 17), Barrier 2 (5n+1 2-circuit at 17 breaks 9*2^S < 16*3^k), Barrier 3 (Z_<0 at -5, -17), Barrier 4 (Z_2 point 23/5 fails global integrality (2^S - 3^k) | C_2), and Barrier 5 (fixed m = 2 circuits on 3n+1). Open: Baker/Rhin lower bound for k > 29 and m >= 3 circuits."
 
 [[node]]
 id = "PROVE-C1"
