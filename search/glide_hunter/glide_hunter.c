@@ -962,7 +962,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    uint64_t tau_cap = (range_end + 1ULL <= TAU_CACHE_CAP) ? (range_end + 1ULL) : TAU_CACHE_CAP;
+    uint64_t tau_cap = (range_end < TAU_CACHE_CAP) ? (range_end + 1ULL) : TAU_CACHE_CAP;
     uint16_t *tau = (uint16_t *)calloc((size_t)tau_cap, sizeof(uint16_t));
     if (!tau) {
         fprintf(stderr, "ERROR: Failed to allocate tau cache of %" PRIu64 " entries\n", tau_cap);
@@ -1708,8 +1708,10 @@ int main(int argc, char **argv) {
     uint64_t u128_fallbacks = 0ULL;
     uint64_t silent_overflows = 0ULL;
     double m2_elapsed = 0.0;
+    bool ran_m2 = false;
 
     if (run_m2 && exit_code == 0) {
+        ran_m2 = true;
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         static const struct {
@@ -1763,7 +1765,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    write_json_output(out_fp, run_m1 ? &m1 : NULL, run_m2, mersenne_max, max_steps, m2_recs,
+    write_json_output(out_fp, run_m1 ? &m1 : NULL, ran_m2, mersenne_max, max_steps, m2_recs,
                       m2_count, u128_fallbacks, silent_overflows, m2_elapsed, &diag);
 
     if (out_fp != stdout) {

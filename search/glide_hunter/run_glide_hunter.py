@@ -25,17 +25,21 @@ from typing import Any
 
 REPO_SEARCH_DIR = pathlib.Path(__file__).resolve().parent
 C_SOURCE = REPO_SEARCH_DIR / "glide_hunter.c"
-BIN_PATH = pathlib.Path("/tmp/solve_collatz_glide_hunter")
-BIN_ASAN_PATH = pathlib.Path("/tmp/solve_collatz_glide_hunter_asan")
+
+
+def _cached_bin_path(asan: bool) -> pathlib.Path:
+    """Return a content-hashed `/tmp/` binary path so worktrees/branches never collide."""
+    digest = hashlib.sha256(C_SOURCE.read_bytes()).hexdigest()[:12]
+    suffix = "_asan" if asan else ""
+    return pathlib.Path(f"/tmp/solve_collatz_glide_hunter_{digest}{suffix}")
 
 
 def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
-    """Compile `glide_hunter.c` into `/tmp/` if missing or stale."""
+    """Compile `glide_hunter.c` into `/tmp/` keyed by source SHA-256."""
     if not C_SOURCE.exists():
         raise FileNotFoundError(f"Missing C source: {C_SOURCE}")
-    target = BIN_ASAN_PATH if asan else BIN_PATH
-    src_mtime = C_SOURCE.stat().st_mtime
-    if not force and target.exists() and target.stat().st_mtime >= src_mtime:
+    target = _cached_bin_path(asan=asan)
+    if not force and target.exists():
         return target
 
     tmp_bin = pathlib.Path(f"{target}.{os.getpid()}")
