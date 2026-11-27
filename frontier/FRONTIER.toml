@@ -33,9 +33,9 @@ needs = ["CORE-001"]
 [[node]]
 id = "CORE-003"
 track = "Core"
-status = "OPEN_SUBGOAL"
+status = "PROVED"
 title = "Accelerated Syracuse map on odd positive integers & parity-vector affine formula"
-target_file = "Collatz/Core/Syracuse.lean"
+lean_file = "Collatz/Core/Syracuse.lean"
 needs = ["CORE-001"]
 barrier_notes = "Definitional bridge; expresses k odd steps as (3^k n + C(v)) / 2^S."
 

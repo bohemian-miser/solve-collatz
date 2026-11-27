@@ -7,4 +7,5 @@ module
 public import Challenge
 public import Collatz.Core.Basic
 public import Collatz.Core.GeneralMaps
+public import Collatz.Core.Syracuse
 public import Collatz.Disprove.Cert
