@@ -99,10 +99,10 @@ id = "PROVE-B1"
 track = "Prove"
 status = "IN_PROGRESS"
 title = "Track A (Diophantine): k-cycle / m-circuit non-existence via linear forms in logarithms & p-adic heights"
-lean_file = "Collatz/Prove/Diophantine/TwoCircuit.lean, Collatz/Prove/Diophantine/ThreeCircuit.lean"
+lean_file = "Collatz/Prove/Diophantine/TwoCircuit.lean, Collatz/Prove/Diophantine/ThreeCircuit.lean, Collatz/Prove/Diophantine/MCircuit.lean"
 target_file = "Collatz/Prove/Diophantine/"
 needs = ["KNOWN-003"]
-barrier_notes = "Phase 1 (TwoCircuit.lean, Simons 2005): exact numerator C_2, S = minHalvings k via 9*2^S < 16*3^k, exponential gap 4^k*(2^S - 3^k)^2 < 16*3^(3k), kernel elimination for k1 + k2 <= 29, and non-vacuous conditional Simons-Baker reduction for k > 29. Phase 2 (ThreeCircuit.lean, Simons-de Weger 2005): exact numerator C_3, automatic intermediate valleys 3 <= m1, m2, sharp band 27*2^S < 64*3^K forcing S in {minHalvings K, minHalvings K + 1}, kernel elimination for k1 + k2 + k3 <= 12, and Barrier 1-5 separations (including 5n+1 at 13 violating 27*2^7 < 64*3^3, and Z_2 rational 3-circuit 143/47). Open: Baker/Rhin lower bounds for 2-circuits (k > 29), 3-circuits (K > 12), and m >= 4 circuits."
+barrier_notes = "Phase 1 (TwoCircuit.lean, Simons 2005): exact numerator C_2, S = minHalvings k via 9*2^S < 16*3^k, exponential gap 4^k*(2^S - 3^k)^2 < 16*3^(3k), kernel elimination for k1 + k2 <= 29, and non-vacuous conditional Simons-Baker reduction for k > 29. Phase 2 (ThreeCircuit.lean, Simons-de Weger 2005): exact numerator C_3, automatic intermediate valleys 3 <= m1, m2, sharp band 27*2^S < 64*3^K forcing S in {minHalvings K, minHalvings K + 1}, kernel elimination for k1 + k2 + k3 <= 12, and Barrier 1-5 separations (including 5n+1 at 13 violating 27*2^7 < 64*3^3, and Z_2 rational 3-circuit 143/47). Phase 3 (MCircuit.lean, Simons-de Weger 2005 general m-circuits): arbitrary m-circuit parity vectors mCircuitVec, recursive closed-form numerator mCircuitOffset, automatic valley lower bounds 3 <= syracuseIter i n, universal band theorem 3^m * 2^S < 4^m * 3^K (with m = 4: 81*2^S < 256*3^K, m = 5: 243*2^S < 1024*3^K, and general window minHalvings K <= S < minHalvings K + m), kernel elimination for 4-circuits K <= 12, and Barrier 1-5 separations (including Z_2 rational 4-circuit 1927/295). Open: Baker/Rhin lower bounds for 2-circuits (k > 29), 3-circuits (K > 12), 4-circuits (K > 12), and general m >= 5 circuits."
 
 [[node]]
 id = "PROVE-C1"
