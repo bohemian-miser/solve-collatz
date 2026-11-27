@@ -61,11 +61,11 @@ barrier_notes = "PR1 (Collatz/Known/TerrasParity.lean) proves the exact mod-2^k 
 [[node]]
 id = "KNOWN-002"
 track = "Known"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Steiner (1977) circuit theorem: no non-trivial 1-cycle (up-then-down cycle)"
-target_file = "Collatz/Known/SteinerCircuit.lean"
+lean_file = "Collatz/Known/SteinerCircuit.lean"
 needs = ["CORE-003"]
-barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1 and Z_<0)."
+barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1, 5n+1, Z_<0, Z_2). Proved: exact 1-circuit numerator & cycle equations, cycle_hunter divisibility equivalence, gap bound & S = min_s(k) uniqueness, kernel elimination for 1 <= k <= 20, and conditional Steiner reduction. Open: Baker/Rhin lower bound 2^S <= 2^k * (2^S - 3^k) for k > 20."
 
 [[node]]
 id = "KNOWN-003"
