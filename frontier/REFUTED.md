@@ -93,3 +93,23 @@ Every entry must include:
   - `3`-circuit (`K = 54, S = 86`): `k_vec = [12, 25, 17]`, `l_vec = [10, 8, 17]`, `dist_approx = 4.758234805174e-09`
   - `4`-circuit (`K = 52, S = 83`): `k_vec = [10, 14, 13, 15]`, `l_vec = [16, 6, 3, 10]`, `dist_approx = 1.973063951232e-09`
 - **Takeaway:** Extends `REF-004` (`2`-circuit `K ≤ 40`, `3`-circuit `K ≤ 24`) to `K ≤ 80` (`2`-circuit), `K ≤ 79` (`3`-circuit), and adds exhaustive `4`-circuit elimination up to `K ≤ 58` (`>3,500×` candidate volume). Pushing beyond `K = 80` or `m ≥ 5` requires multi-limb (`256`-bit+) modular arithmetic or lattice/LLL reduction in `DISPROVE-002` Phase 3.
+
+### `REF-008` — Billion-scale Track B Phase 3 divergence, cycle, or infinite stopping-time anomaly in `1 ≤ n ≤ 10⁹`, Mersenne lifts `2^k·{1,3,27} - 1`, and Terras/Roosendaal high-glide lifts `2^k·{703,9663,77671,319804831} - 1` (`k ≤ 1000`)
+- **Claim:** There exists a positive integer `1 ≤ n ≤ 10⁹` or a structured seed in the `7` high-glide families `2^k·{1,3,27} - 1` (Mersenne lifts) and `2^k·{703,9663,77671,319804831} - 1` (Terras/Roosendaal record-glide lifts) for `1 ≤ k ≤ 1000` that fails to drop strictly below `n` (or diverges / enters a non-trivial cycle).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` counterexamples across `10⁹` integers + `7,000` structured seeds up to `k = 1000`, `0` silent `__uint128_t` overflows; `overflow_count = 0`; `u128_bigint_fallbacks = 6,489`; `deterministic_sha256 = 6e85b0e9bf1a27785243d94b9b11716778fe593528101521c34e96a26fc50510`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 8-15 python3 search/glide_hunter/run_glide_hunter.py --range-end 1000000000 --mersenne-max 1000 --sieve-bits 18 --threads 8 --log-json /tmp/disprove003_p3_1e9.json
+  ```
+- **Sieve & Arithmetic Audit:**
+  - Upgraded mod-$2^{18}$ (`262,144`) affine drop table covers `254,649 / 262,144` residues (`97.1409%`, `971,154,212` fast-skips in `1..10⁹`, max pre-drop steps `29`, max threshold `n_min = 24`, max pre-drop ratio `< 173`) paired with a `32 KiB` L1-resident fast-skip bitset for `n ≥ 2.5·10⁸` (`1.259s` Mode 1 / `793,980,270 seeds/s`, `0.995s` Mode 2 on 8 pinned cores; vs `1.363s` / `733,497,386 seeds/s` under `--sieve-bits 16` with `63,422 / 65,536 = 96.7743%` coverage and `967,679,498` fast-skips).
+  - Cross-verified `--sieve-bits 0` (brute force) ≡ `--sieve-bits 16` ≡ `--sieve-bits 18` bit-for-bit on `1..2,000,000`, `threads=1` ≡ `threads=8` ≡ ASan+UBSan `deterministic_sha256` on `1..5,000,000 + k ≤ 1000`, zero ASan/UBSan findings, strict RFC-8259 JSON (`allow_nan=False`), explicit `--max-steps` budget diagnostic check, and pure-Python `int` verification of every reported record seed.
+- **Verified Record Summary (`1 ≤ n ≤ 10⁹`):**
+  | Record Type | Peak Seed `n` | Stopping Time `σ(n)` | Total Steps `τ(n)` | Peak Value | Peak Ratio `peak/n` |
+  |---|---:|---:|---:|---:|---:|
+  | Max Stopping Time (`1 ≤ n ≤ 10⁹`) | `217,740,015` | `644` | `793` | `2,516,021,527,120` | `11,555.16×` |
+  | Max Peak Ratio (`1 ≤ n ≤ 10⁹`) | `319,804,831` | `427` | `592` | `1,414,236,446,719,942,480` | `4,422,186,001.06×` |
+  | Max Total Steps (`n ≤ 249,999,999` [`tau_exact_up_to`]) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
+  | Literature Total-Steps Stress Anchor (`> tau_exact_up_to`, Python-verified) | `670,617,279` | `29` | `986` | `966,616,035,460` | `1,441.38×` |
+- **Structured High-Glide Stress Families (`1 ≤ k ≤ 1000`, `7,000` seeds across 7 families):** All `2^k·{1,3,27,703,9663,77671,319804831} - 1` converge to `1` (`max σ = 6,786` at `2^{997}-1`, `max τ = 14,241` at `2^{998}-1`, `max log2_glide_ratio = 592.436188` at `2^{997}-1` [`1,590`-bit peak], global `max_peak_bits = 1,617` attained at `319,804,831·2^{1000}-1`).
+- **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification to `10⁹` and structured `k ≤ 1000` (`1,617`-bit peaks) with `794M seeds/s` on 8 cores; `search/barrier_redteam.py` now includes all `≤ 10⁹` record stress seeds (including `217,740,015`, `319,804,831`, and `670,617,279`).

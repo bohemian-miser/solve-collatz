@@ -79,9 +79,17 @@ def verify_builtin_barriers() -> bool:
 
 def check_stopping_bound(expr: str, limit: int) -> int:
     """Test a proposed stopping-time bound `f(n, steps) -> bool` on standard 3n+1 up to `limit`
-    plus adversarial seeds `2^k - 1`."""
+    plus adversarial Mersenne (`2^k - 1`) and `<= 10^9` record stress seeds."""
     fn = eval(expr, {"__builtins__": {"abs": abs, "min": min, "max": max, "pow": pow}})
-    seeds = list(range(2, limit + 1)) + [(1 << k) - 1 for k in range(5, 45)]
+    record_stress_seeds = [
+        63_728_127,
+        80_049_391,
+        217_740_015,
+        226_588_897,
+        319_804_831,
+        670_617_279,
+    ]
+    seeds = list(range(2, limit + 1)) + record_stress_seeds + [(1 << k) - 1 for k in range(5, 45)]
     for n in seeds:
         st, steps, peak = find_cycle_or_steps(3, 1, n, max_steps=10000)
         if st != "hits_one":
@@ -90,7 +98,10 @@ def check_stopping_bound(expr: str, limit: int) -> int:
         if not fn(n, steps):
             print(f"[REFUTED] Stopping bound failed at n={n} (steps={steps}, peak={peak})")
             return 1
-    print(f"[SURVIVED] Tested {len(seeds)} seeds (up to {limit} + 2^k-1 stress seeds); 0 refutations.")
+    print(
+        f"[SURVIVED] Tested {len(seeds)} seeds (up to {limit} + 10^9 records + 2^k-1 stress seeds); "
+        "0 refutations."
+    )
     return 0
 
 
