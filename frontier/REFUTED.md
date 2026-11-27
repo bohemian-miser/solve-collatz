@@ -40,3 +40,22 @@ Every entry must include:
   python3 search/cycle_hunter.py --self-test --max-k 5000 --max-2circuit-k 40 --max-3circuit-k 24 --cf-max-k 100000 --log-json /tmp/disprove002_sweep.json
   ```
 - **Takeaway:** Closest `2`-adic rational near-misses found in the bounded search were `x = 211/13` (`k=5, S=8`, 1-circuit, distance `3/13`), `(k=33, S=54)` (`2`-circuit, distance `≈ 2.47e-5`), and `(k=24, S=40)` (`3`-circuit, distance `≈ 5.98e-6`); Track B cycle hunting must push beyond `3`-circuits (e.g., LLL/lattice reduction or GPU/SIMD higher-`m` circuits beyond `k=40`).
+
+### `REF-005` — Divergent orbit, cycle, or infinite stopping-time anomaly in `1 ≤ n ≤ 10⁸` or structured high-glide families `2^k·{1,3,27} - 1` (`k ≤ 120`)
+- **Claim:** There exists a positive integer `1 ≤ n ≤ 10⁸` or a structured seed `n ∈ {2^k - 1, 3·2^k - 1, 27·2^k - 1}` (`1 ≤ k ≤ 120`) that fails to drop strictly below `n` (or diverges / enters a non-trivial cycle).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` counterexamples across `10⁸` integers + `360` structured seeds, `0` silent `__uint128_t` overflows; `deterministic_sha256 = 94c184c1d5f4766a82ebed4ee824541183a4618f88d0d33e59c04c62223b2fe9`).
+- **Witness / Reproducer:**
+  ```bash
+  python3 search/glide_hunter/run_glide_hunter.py --range-end 100000000 --mersenne-max 120 --log-json /tmp/disprove003_1e8.json
+  ```
+  - **Sieve & Arithmetic Audit:** mod-$2^{16}$ affine drop table covers `63,422 / 65,536` residues (`96.77%`, `96,710,868` fast-skips in `1..10⁸`, max pre-drop threshold `24`, max pre-drop ratio `115.332`); `overflow_count = 0`; `u128_bigint_fallbacks = 124` (arbitrary-precision `bigint_t` verified up to `196`-bit peaks); throughput `299,362,169 seeds/s` (`0.334s` Mode 1, `0.004s` Mode 2, 16 threads).
+  - **Verified Record Summary (`1 ≤ n ≤ 10⁸`):**
+    | Record Type | Peak Seed `n` | Stopping Time `σ(n)` | Total Steps `τ(n)` | Peak Value | Peak Ratio `peak/n` |
+    |---|---:|---:|---:|---:|---:|
+    | Classic Anchor | `27` | `96` | `111` | `9,232` | `341.93×` |
+    | Classic Anchor | `703` | `132` | `170` | `250,504` | `356.34×` |
+    | Classic Glide Anchor | `9,663` | `88` | `184` | `27,114,424` | `2,806.00×` |
+    | Max Stopping Time & Total Steps (`≤ 10⁸`) | `63,728,127` | `613` | `949` | `966,616,035,460` | `15,167.81×` |
+    | Max Peak Ratio (`≤ 10⁸`) | `80,049,391` | `396` | `572` | `2,185,143,829,170,100` | `27,297,444.76×` |
+  - **Structured High-Glide Stress Families (`1 ≤ k ≤ 120`, `360` seeds):** All `2^k - 1`, `3·2^k - 1`, and `27·2^k - 1` converge to `1` (max `σ = 810` at `2^{113}-1`, max `τ = 1649` at `2^{116}-1`, max glide `5.203×10^{21}×` at `2^{117}-1`, max `196`-bit peak).
+- **Takeaway:** Any candidate Track A stopping-time bound `σ(n) ≤ f(n)` or peak bound can be red-teamed directly against the `63,728,127` / `80,049,391` / `2^{117}-1` stress seeds (`python3 search/barrier_redteam.py --check-stopping-bound ...`); Track B searches must look above `10⁸` or target structured Diophantine cycle families (`DISPROVE-002`).
