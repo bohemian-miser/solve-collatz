@@ -6,13 +6,14 @@ Welcome! This repository is built for **humans and autonomous AI agent swarms** 
 
 ## 1. Hard Boundaries (CI-Enforced)
 
-1. **Never touch frozen files:** Every path listed in `problem.toml` (`[guards].frozen_files` — including `Challenge.lean`, `problem.toml`, `lean-toolchain`, `scripts/PrintAxioms.lean`, `scripts/check_challenge_frozen.py`, `scripts/check_source_guards.py`, and `.github/workflows/*.yml`) is human-owned and frozen.
+1. **Never touch frozen files:** Every path listed in `problem.toml` (`[guards].frozen_files` — including `Challenge.lean`, `problem.toml`, `lean-toolchain`, `scripts/PrintAxioms.lean`, `scripts/check_challenge_frozen.py`, `scripts/check_source_guards.py`, and `.github/workflows/*.yml`) is human-owned and frozen. Verify locally against `origin/main` via `python3 scripts/check_challenge_frozen.py origin/main HEAD`.
 2. **Zero `sorry` on `main`:** Every merged `.lean` file must compile with zero `sorry`, zero `admit`, zero `native_decide`, and axioms restricted strictly to `[propext, Classical.choice, Quot.sound]`. *(Open subgoals live in `frontier/FRONTIER.toml`, NOT as `sorry` files on `main`!)*
 3. **Zero forbidden escape hatches:** No `set_option`, no `maxHeartbeats` overrides, no `erw`, no `meta`/`unsafe`/`elab`/`run_tac`, and no double-quoted strings inside comments/docstrings.
 4. **Readability & anti-inlining norm:**
    - Every proof **`<= 50` lines**; every new `.lean` file **`<= 1000` lines**; every line **`<= 100` chars**.
    - Every public declaration carries a clear mathematical `/-- ... -/` docstring.
    - Do **not** inline documented lemmas or golf proofs into unreadable one-liners.
+5. **Alphabetical root barrel imports:** Keep `public import` entries in the root library file (`Problem.lean` / `<LeanRoot>.lean`) sorted alphabetically to minimize merge conflicts across parallel swarm PRs.
 
 ---
 
@@ -27,6 +28,7 @@ Welcome! This repository is built for **humans and autonomous AI agent swarms** 
    - Trivial restatements of `Challenge.lean` disguised as progress will be rejected.
 4. **Track B (`Disprove/`) Verification Standard:**
    - Off-kernel search engines in `search/` may use Python, Rust, C++, GPU, or SAT/SMT solvers.
+   - Compiled native search tools MUST use `scripts/native_cache.py` (`cached_binary_path` + `atomic_compile` into content-hashed `/tmp/<prefix>_<sha12>` paths; NEVER commit compiled binaries), serialize logs with strict RFC-8259 JSON (`dump_strict_json` / `allow_nan=False`), pass an `--asan` (`ASan+UBSan`) self-test, and verify multi-thread determinism (`t=1 == t=N` bit-for-bit `deterministic_sha256` JSON field computed via `canonical_sha256` over canonical payloads).
    - Any claimed counterexample MUST compile into a **Lean-kernel-verified certificate** proving `Disproof` (zero `sorry`, zero `native_decide`).
    - Exhausted search ranges should be logged with exact reproducible parameters and bounds.
 
