@@ -51,11 +51,12 @@ barrier_notes = "Formally exhibits non-trivial 2-adic periodic points to power r
 [[node]]
 id = "KNOWN-001"
 track = "Known"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Terras (1976) & Everett (1977): almost all n have finite stopping time (natural density 1)"
+lean_file = "Collatz/Known/TerrasParity.lean"
 target_file = "Collatz/Known/TerrasDensity.lean"
 needs = ["CORE-003"]
-barrier_notes = "Distinguishes 3n+1 (drift log_2(3/4) < 0) from 5n+1 (drift log_2(5/4) > 0)."
+barrier_notes = "PR1 (Collatz/Known/TerrasParity.lean) proves the exact mod-2^k parity-vector bijection, congruence law, and REF-002 all-odd rising barrier; asymptotic Chernoff/density-1 concentration in TerrasDensity.lean (distinguishing log_2(3/4) < 0 vs log_2(5/4) > 0) remains for PR2."
 
 [[node]]
 id = "KNOWN-002"
