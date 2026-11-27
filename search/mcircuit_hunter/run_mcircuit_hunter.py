@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Pure-stdlib Python wrapper for `mcircuit_hunter.c` (Track B `DISPROVE-002 Phase 3`).
+"""Pure-stdlib Python wrapper for `mcircuit_hunter.c` (Track B `DISPROVE-002 Phase 4`).
 
 Auto-compiles `search/mcircuit_hunter/mcircuit_hunter.c` into content-hashed
 `/tmp/solve_collatz_mcircuit_hunter_<sha12>[_asan]` via `scripts/native_cache.py`,
 keeping the git working tree 100% free of binaries. Validates exact agreement against
-`search/cycle_hunter.py`, cross-verifies `u256` vs `u128` on `m=2..4`, cross-verifies
-`m=5` Simons-de Weger circuits against an independent Python reference, verifies
-multi-thread determinism, emits Lean `NontrivialCycleCert` on any hit, and enforces
-strict RFC-8259 JSON serialization.
+`search/cycle_hunter.py`, cross-verifies `u128 == u256 == u512` bit-for-bit on `m=2..6`,
+cross-verifies `m=2..6` Simons-de Weger circuits against an independent pure-Python
+exact-bigint reference, verifies multi-thread determinism, emits Lean
+`NontrivialCycleCert` on any hit, and enforces strict RFC-8259 JSON serialization.
 """
 
 from __future__ import annotations
@@ -90,10 +90,12 @@ def run_engine(
     k3_max: int,
     k4_max: int,
     k5_max: int,
+    k6_max: int,
     bound: str,
     threads: int,
     asan: bool = False,
     force_u256: bool = False,
+    force_u512: bool = False,
 ) -> dict[str, Any]:
     """Invoke the compiled C binary and attach `deterministic_sha256` (and Lean certs on hits)."""
     bin_path = ensure_compiled(asan=asan)
@@ -107,6 +109,8 @@ def run_engine(
         str(k4_max),
         "--k5-max",
         str(k5_max),
+        "--k6-max",
+        str(k6_max),
         "--bound",
         bound,
         "--threads",
@@ -116,6 +120,8 @@ def run_engine(
     ]
     if force_u256:
         cmd.append("--force-u256")
+    if force_u512:
+        cmd.append("--force-u512")
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode not in (0, 10):
         raise RuntimeError(f"mcircuit_hunter exited with {res.returncode}:\n{res.stderr}")
@@ -127,110 +133,57 @@ def run_engine(
     return data
 
 
-def _python_simons_count_m4(k_max: int) -> tuple[int, int]:
-    """Independent pure-Python canonical 4-circuit Simons-bound counter and hit checker."""
-    tested = 0
-    hits = 0
-    for k in range(4, k_max + 1):
-        p3k = 3**k
-        s = p3k.bit_length()
-        while (1 << s) * (3**4) < (4**4) * p3k:
-            rem_l = s - k + 4
-            if rem_l >= 8:
-                denom = (1 << s) - p3k
-                for k0 in range(1, k // 4 + 1):
-                    for k1 in range(k0, k - 3 * k0 + 1):
-                        for k2 in range(k0, k - 2 * k0 - k1 + 1):
-                            k3 = k - k0 - k1 - k2
-                            if k3 < k0:
-                                continue
-                            for l0 in range(2, rem_l - 5):
-                                for l1 in range(2, rem_l - l0 - 3):
-                                    for l2 in range(2, rem_l - l0 - l1 - 1):
-                                        l3 = rem_l - l0 - l1 - l2
-                                        if l3 < 2:
-                                            continue
-                                        b = ((k0, l0), (k1, l1), (k2, l2), (k3, l3))
-                                        if (
-                                            b > (b[1], b[2], b[3], b[0])
-                                            or b > (b[2], b[3], b[0], b[1])
-                                            or b > (b[3], b[0], b[1], b[2])
-                                        ):
-                                            continue
-                                        tested += 1
-                                        s0 = k0 - 1 + l0
-                                        s01 = s0 + k1 - 1 + l1
-                                        s012 = s01 + k2 - 1 + l2
-                                        c = (
-                                            (3 ** (k1 + k2 + k3)) * (3**k0 - (1 << k0))
-                                            + (3 ** (k2 + k3)) * (1 << s0) * (3**k1 - (1 << k1))
-                                            + (3**k3) * (1 << s01) * (3**k2 - (1 << k2))
-                                            + (1 << s012) * (3**k3 - (1 << k3))
-                                        )
-                                        if c % denom == 0 and (c // denom) > 1:
-                                            hits += 1
-            s += 1
-    return tested, hits
+def _compositions(total: int, parts: int, min_val: int) -> list[tuple[int, ...]]:
+    """Return all ordered `parts`-tuples of integers >= `min_val` summing to `total`."""
+    if parts == 1:
+        return [(total,)] if total >= min_val else []
+    out: list[tuple[int, ...]] = []
+    max_first = total - (parts - 1) * min_val
+    for first in range(min_val, max_first + 1):
+        for tail in _compositions(total - first, parts - 1, min_val):
+            out.append((first, *tail))
+    return out
 
 
-def _python_simons_count_m5(k_max: int) -> tuple[int, int]:
-    """Independent pure-Python canonical 5-circuit Simons-bound counter and hit checker."""
+def _python_simons_count_m(m: int, k_max: int) -> tuple[int, int]:
+    """Independent pure-Python canonical `m`-circuit Simons-bound counter and hit checker."""
     tested = 0
     hits = 0
-    for k in range(5, k_max + 1):
+    p3m = 3**m
+    p4m = 4**m
+    for k in range(m, k_max + 1):
         p3k = 3**k
+        k_tuples = _compositions(k, m, 1)
         s = p3k.bit_length()
-        while (1 << s) * (3**5) < (4**5) * p3k:
-            rem_l = s - k + 5
-            if rem_l >= 10:
+        while (1 << s) * p3m < p4m * p3k:
+            rem_l = s - k + m
+            if rem_l >= 2 * m:
                 denom = (1 << s) - p3k
-                for k0 in range(1, k // 5 + 1):
-                    for k1 in range(k0, k - 4 * k0 + 1):
-                        for k2 in range(k0, k - 3 * k0 - k1 + 1):
-                            for k3 in range(k0, k - 2 * k0 - k1 - k2 + 1):
-                                k4 = k - k0 - k1 - k2 - k3
-                                if k4 < k0:
-                                    continue
-                                for l0 in range(2, rem_l - 7):
-                                    for l1 in range(2, rem_l - l0 - 5):
-                                        for l2 in range(2, rem_l - l0 - l1 - 3):
-                                            for l3 in range(2, rem_l - l0 - l1 - l2 - 1):
-                                                l4 = rem_l - l0 - l1 - l2 - l3
-                                                if l4 < 2:
-                                                    continue
-                                                b = (
-                                                    (k0, l0),
-                                                    (k1, l1),
-                                                    (k2, l2),
-                                                    (k3, l3),
-                                                    (k4, l4),
-                                                )
-                                                if any(b > b[r:] + b[:r] for r in range(1, 5)):
-                                                    continue
-                                                tested += 1
-                                                s0 = k0 - 1 + l0
-                                                s01 = s0 + k1 - 1 + l1
-                                                s012 = s01 + k2 - 1 + l2
-                                                s0123 = s012 + k3 - 1 + l3
-                                                c = (
-                                                    (3 ** (k1 + k2 + k3 + k4)) * (3**k0 - (1 << k0))
-                                                    + (3 ** (k2 + k3 + k4))
-                                                    * (1 << s0)
-                                                    * (3**k1 - (1 << k1))
-                                                    + (3 ** (k3 + k4))
-                                                    * (1 << s01)
-                                                    * (3**k2 - (1 << k2))
-                                                    + (3**k4) * (1 << s012) * (3**k3 - (1 << k3))
-                                                    + (1 << s0123) * (3**k4 - (1 << k4))
-                                                )
-                                                if c % denom == 0 and (c // denom) > 1:
-                                                    hits += 1
+                l_tuples = _compositions(rem_l, m, 2)
+                for ks in k_tuples:
+                    k0 = ks[0]
+                    if any(kj < k0 for kj in ks[1:]):
+                        continue
+                    for ls in l_tuples:
+                        b = tuple(zip(ks, ls))
+                        if any(b > b[r:] + b[:r] for r in range(1, m)):
+                            continue
+                        tested += 1
+                        c = 0
+                        k_pref = 0
+                        s_pref = 0
+                        for kj, lj in b:
+                            k_pref += kj
+                            c += (3 ** (k - k_pref)) * (1 << s_pref) * (3**kj - (1 << kj))
+                            s_pref += kj - 1 + lj
+                        if c % denom == 0 and (c // denom) > 1:
+                            hits += 1
             s += 1
     return tested, hits
 
 
 def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
-    """Run C11 unit tests, Python cross-checks, u128==u256 equivalence, and determinism."""
+    """Run C11 unit tests, Python cross-checks, u128==u256==u512 equivalence, and determinism."""
     bin_path = ensure_compiled(asan=asan)
 
     # 1. C11 internal self-tests
@@ -239,7 +192,7 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
         raise RuntimeError(f"C11 --self-test failed ({st.returncode}):\n{st.stdout}\n{st.stderr}")
     print(st.stdout.strip())
 
-    # 2. Strict RFC-8259 rejection check & Lean NontrivialCycleCert schema check
+    # 2. Strict RFC-8259 rejection check & Lean NontrivialCycleCert schema check (m=1..6)
     sys.path.insert(0, str(SEARCH_DIR))
     import cycle_hunter  # type: ignore
 
@@ -260,16 +213,31 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
         errs = cycle_hunter.validate_lean_cert_against_source(cert, CERT_LEAN)
         if errs:
             raise AssertionError(f"Lean cert validation failed for ({start}, {period}): {errs}")
-    synth_certs = _emit_certs_for_hits([{"n": "5", "k": 2, "s": 3}])
-    if len(synth_certs) != 1 or "start := 5" not in synth_certs[0] or "period := 5" not in synth_certs[0]:
-        raise AssertionError(f"Synthetic hit cert emission mismatch: {synth_certs}")
-    print("[OK] RFC-8259 strict JSON guard & Lean NontrivialCycleCert schema verified")
+    synth_hits = [
+        {"m": m, "n": str(17 if m == 2 else 5 + m), "k": 4 + m, "s": 7 + m}
+        for m in range(1, 7)
+    ]
+    synth_certs = _emit_certs_for_hits(synth_hits)
+    if len(synth_certs) != 6:
+        raise AssertionError(f"Expected 6 synthetic Lean certs for m=1..6, got {len(synth_certs)}")
+    for hit, cert in zip(synth_hits, synth_certs):
+        errs = cycle_hunter.validate_lean_cert_against_source(cert, CERT_LEAN)
+        if errs or f"start := {hit['n']}" not in cert:
+            raise AssertionError(f"Synthetic m={hit['m']} Lean cert mismatch: {errs}")
+    print("[OK] RFC-8259 strict JSON guard & Lean NontrivialCycleCert schema (m=1..6) verified")
 
     # 3. Cross-verify against search/cycle_hunter.py on 2-circuits (K <= 18) and 3-circuits (K <= 12)
     py2 = cycle_hunter.scan_2_circuits(18)
     py3 = cycle_hunter.scan_3_circuits(12)
     c_el = run_engine(
-        k2_max=18, k3_max=12, k4_max=0, k5_max=0, bound="eliahou", threads=threads, asan=asan
+        k2_max=18,
+        k3_max=12,
+        k4_max=0,
+        k5_max=0,
+        k6_max=0,
+        bound="eliahou",
+        threads=threads,
+        asan=asan,
     )
     fams = {f["m"]: f for f in c_el["canonical"]["families"]}
 
@@ -294,49 +262,52 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
         f"2-circuit K<=18 ({py2.candidates_tested}), 3-circuit K<=12 ({py3.candidates_tested})"
     )
 
-    # 4. Cross-verify u256 engine vs u128 path on m=2 (K<=80), m=3 (K<=40), m=4 (K<=20)
-    c_u128 = run_engine(
-        k2_max=80, k3_max=40, k4_max=20, k5_max=0, bound="simons", threads=threads, asan=asan, force_u256=False
-    )
-    c_u256 = run_engine(
-        k2_max=80, k3_max=40, k4_max=20, k5_max=0, bound="simons", threads=threads, asan=asan, force_u256=True
-    )
+    # 4. Cross-verify u128 == u256 == u512 bit-for-bit on m=2..6
+    tier_kw = dict(k2_max=50, k3_max=20, k4_max=14, k5_max=12, k6_max=12, bound="simons", threads=threads, asan=asan)
+    c_u128 = run_engine(**tier_kw)
+    c_u256 = run_engine(**tier_kw, force_u256=True)
+    c_u512 = run_engine(**tier_kw, force_u512=True)
     if c_u128["deterministic_sha256"] != c_u256["deterministic_sha256"]:
         raise AssertionError(
-            f"u128 vs u256 mismatch on m=2(<=80),3(<=40),4(<=20): "
+            f"u128 vs u256 mismatch on m=2..6: "
             f"{c_u128['deterministic_sha256']} != {c_u256['deterministic_sha256']}"
         )
+    if c_u128["deterministic_sha256"] != c_u512["deterministic_sha256"]:
+        raise AssertionError(
+            f"u128 vs u512 mismatch on m=2..6: "
+            f"{c_u128['deterministic_sha256']} != {c_u512['deterministic_sha256']}"
+        )
     print(
-        f"[OK] Cross-verified u256 == u128 bit-for-bit on m=2(K<=80), m=3(K<=40), m=4(K<=20): "
+        f"[OK] Cross-verified u128 == u256 == u512 bit-for-bit on m=2(<=50)..m=6(<=12): "
         f"sha256={c_u128['deterministic_sha256'][:16]}"
     )
 
-    # 5. Cross-verify Simons m=4 (K<=10) & m=5 (K<=12) against independent pure-Python references
-    py4_tested, py4_hits = _python_simons_count_m4(10)
-    py5_tested, py5_hits = _python_simons_count_m5(12)
-    c_m5_ref = run_engine(
-        k2_max=18, k3_max=12, k4_max=10, k5_max=12, bound="simons", threads=threads, asan=asan
+    # 5. Cross-verify Simons m=2..6 against independent pure-Python exact-bigint references
+    py_refs = {
+        2: (20, *_python_simons_count_m(2, 20)),
+        3: (15, *_python_simons_count_m(3, 15)),
+        4: (10, *_python_simons_count_m(4, 10)),
+        5: (12, *_python_simons_count_m(5, 12)),
+        6: (13, *_python_simons_count_m(6, 13)),
+    }
+    c_ref = run_engine(
+        k2_max=20, k3_max=15, k4_max=10, k5_max=12, k6_max=13, bound="simons", threads=threads, asan=asan
     )
-    m5_fams = {f["m"]: f for f in c_m5_ref["canonical"]["families"]}
-    if m5_fams[4]["candidates_tested"] != py4_tested or m5_fams[4]["hits_found"] != py4_hits:
-        raise AssertionError(
-            f"4-circuit Simons mismatch: C={m5_fams[4]} vs Py=({py4_tested}, {py4_hits})"
-        )
-    if m5_fams[5]["candidates_tested"] != py5_tested or m5_fams[5]["hits_found"] != py5_hits:
-        raise AssertionError(
-            f"5-circuit Simons mismatch: C={m5_fams[5]} vs Py=({py5_tested}, {py5_hits})"
-        )
+    ref_fams = {f["m"]: f for f in c_ref["canonical"]["families"]}
+    for m, (km, py_tested, py_hits) in py_refs.items():
+        if ref_fams[m]["candidates_tested"] != py_tested or ref_fams[m]["hits_found"] != py_hits:
+            raise AssertionError(
+                f"{m}-circuit Simons K<={km} mismatch: C={ref_fams[m]} vs Py=({py_tested}, {py_hits})"
+            )
     print(
-        f"[OK] Cross-verified Simons m=4 K<=10 ({py4_tested:,}) & m=5 K<=12 ({py5_tested:,}) vs Python"
+        "[OK] Cross-verified Simons vs Python exact-bigint: "
+        + ", ".join(f"m={m}(K<={km}:{cnt:,})" for m, (km, cnt, _) in py_refs.items())
     )
 
-    # 6. High-K u256 (K=100) + multi-thread determinism check (threads=1 vs threads=N)
-    c_hi_1 = run_engine(
-        k2_max=100, k3_max=40, k4_max=20, k5_max=16, bound="simons", threads=1, asan=asan
-    )
-    c_hi_n = run_engine(
-        k2_max=100, k3_max=40, k4_max=20, k5_max=16, bound="simons", threads=threads, asan=asan
-    )
+    # 6. High-K u512 (m=2 K<=240) + m=6 + multi-thread determinism check (threads=1 vs threads=N)
+    det_kw = dict(k2_max=240, k3_max=24, k4_max=14, k5_max=12, k6_max=13, bound="simons", asan=asan)
+    c_hi_1 = run_engine(**det_kw, threads=1)
+    c_hi_n = run_engine(**det_kw, threads=threads)
     if c_hi_1["canonical"]["overflow_guard_skips"] != 0:
         raise AssertionError(
             f"Unexpected overflow_guard_skips={c_hi_1['canonical']['overflow_guard_skips']}"
@@ -346,7 +317,7 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
             f"Thread determinism failure: 1t={c_hi_1['deterministic_sha256']} != {threads}t={c_hi_n['deterministic_sha256']}"
         )
     print(
-        f"[OK] u256 K=100 & thread determinism verified (1t == {threads}t, skips=0): "
+        f"[OK] u512 K=240 & m=6 thread determinism verified (1t == {threads}t, skips=0): "
         f"sha256={c_hi_n['deterministic_sha256'][:16]}"
     )
     return c_hi_n
@@ -354,16 +325,18 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compiled C11 Canonical m-Circuit Diophantine Hunter (DISPROVE-002 Phase 3)"
+        description="Compiled C11 Canonical m-Circuit Diophantine Hunter (DISPROVE-002 Phase 4)"
     )
     parser.add_argument("--self-test", action="store_true", help="Run C11 + Python cross-verification tests")
     parser.add_argument("--asan", action="store_true", help="Build & run with ASan + UBSan")
     parser.add_argument("--force-rebuild", action="store_true", help="Force gcc recompilation")
-    parser.add_argument("--force-u256", action="store_true", help="Force u256 modular arithmetic for all K")
-    parser.add_argument("--k2-max", type=int, default=160, help="Max K for 2-circuits")
-    parser.add_argument("--k3-max", type=int, default=100, help="Max K for 3-circuits")
-    parser.add_argument("--k4-max", type=int, default=60, help="Max K for 4-circuits")
-    parser.add_argument("--k5-max", type=int, default=38, help="Max K for 5-circuits")
+    parser.add_argument("--force-u256", action="store_true", help="Force >= u256 modular arithmetic")
+    parser.add_argument("--force-u512", action="store_true", help="Force u512 modular arithmetic for all K")
+    parser.add_argument("--k2-max", type=int, default=240, help="Max K for 2-circuits")
+    parser.add_argument("--k3-max", type=int, default=120, help="Max K for 3-circuits")
+    parser.add_argument("--k4-max", type=int, default=70, help="Max K for 4-circuits")
+    parser.add_argument("--k5-max", type=int, default=44, help="Max K for 5-circuits")
+    parser.add_argument("--k6-max", type=int, default=32, help="Max K for 6-circuits")
     parser.add_argument("--bound", choices=("simons", "eliahou"), default="simons", help="Upper S bound")
     parser.add_argument("--threads", type=int, default=4, help="Worker thread count (1..64)")
     parser.add_argument("--json-out", type=pathlib.Path, help="Write strict RFC-8259 JSON sweep log")
@@ -380,10 +353,12 @@ def main() -> int:
             k3_max=args.k3_max,
             k4_max=args.k4_max,
             k5_max=args.k5_max,
+            k6_max=args.k6_max,
             bound=args.bound,
             threads=args.threads,
             asan=args.asan,
             force_u256=args.force_u256,
+            force_u512=args.force_u512,
         )
 
     elapsed = time.monotonic() - t0
