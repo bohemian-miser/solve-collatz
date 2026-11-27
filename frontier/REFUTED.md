@@ -76,3 +76,20 @@ Every entry must include:
   | Max Peak Ratio (`≤ 5·10⁸`) | `319,804,831` | `427` | `592` | `1,414,236,446,719,942,480` | `4,422,186,001.06×` |
 - **Structured High-Glide Stress Families (`1 ≤ k ≤ 500`, `1,500` seeds):** All `2^k - 1`, `3·2^k - 1`, and `27·2^k - 1` converge to `1` (max `σ = 3,185` at `2^{485}-1`, max `τ = 6,748` at `2^{500}-1`, max glide ratio at `2^{493}-1` with `log2_glide_ratio = 294.255688` [`788`-bit peak]; global `max_peak_bits = 799` attained at `27·2^{500}-1`).
 - **Takeaway:** Phase 2 search confirms zero anomalies up to `5·10⁸` and `k = 500`, validating finite stopping times and strict numerical overflow safety (`[S2]` fixed via exact `log2_glide_ratio` and `peak_bits`).
+
+### `REF-007` — Expanded Track B Phase 2 canonical `2`-circuit (`K ≤ 80`), `3`-circuit (`K ≤ 79`), and `4`-circuit (`K ≤ 58`) positive non-trivial cycles
+- **Claim:** There exists a non-trivial positive integer cycle `n > 1` (`n_j ≥ 3` at every block entry) satisfying `(2^S - 3^K) n_0 = C(v)` across any canonical `m`-circuit in the exact Simons–de Weger positive band `S_min(K) ≤ S < K log₂(3) + m log₂(4/3)` (`2^S · 3^m < 4^m · 3^K`) for:
+  1. Canonical `2`-circuits with `2 ≤ K ≤ 80` (`40,758` candidates),
+  2. Canonical `3`-circuits with `3 ≤ K ≤ 79` (`19,921,732` candidates),
+  3. Canonical `4`-circuits with `4 ≤ K ≤ 58` (`621,087,319` candidates).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` non-trivial positive cycles across `641,049,809` canonical `m`-circuits, `overflow_guard_skips = 0`; `deterministic_sha256 = 5d25f25ac908098fa2384f758a3e043776b802b7d8d4bfb65dac45b816d765bd`).
+- **Witness / Reproducer:**
+  ```bash
+  python3 search/mcircuit_hunter/run_mcircuit_hunter.py --k2-max 80 --k3-max 79 --k4-max 58 --bound simons --threads 8 --json-out /tmp/disprove002_p2_sweep.json
+  ```
+- **Arithmetic & Cross-Verification Audit:** C11 engine (`-O3 -Wall -Wextra -Werror -std=c11 -pthread`, `elapsed_seconds = 2.934143` on 8 threads) with overflow-free `add_mod128`/`mul_mod128`, strict `K ≤ 80` and `S ≤ 127` guards, exact agreement with `search/cycle_hunter.py` on Eliahou-band `2`-circuits (`K ≤ 18`, `1,271` candidates) and `3`-circuits (`K ≤ 12`, `1,404` candidates), and zero ASan/UBSan findings.
+- **Closest 2-Adic Rational Near-Misses:**
+  - `2`-circuit (`K = 62, S = 99`): `k_vec = [14, 48]`, `l_vec = [31, 8]`, `dist_approx = 2.479911063979e-05`
+  - `3`-circuit (`K = 54, S = 86`): `k_vec = [12, 25, 17]`, `l_vec = [10, 8, 17]`, `dist_approx = 4.758234805174e-09`
+  - `4`-circuit (`K = 52, S = 83`): `k_vec = [10, 14, 13, 15]`, `l_vec = [16, 6, 3, 10]`, `dist_approx = 1.973063951232e-09`
+- **Takeaway:** Extends `REF-004` (`2`-circuit `K ≤ 40`, `3`-circuit `K ≤ 24`) to `K ≤ 80` (`2`-circuit), `K ≤ 79` (`3`-circuit), and adds exhaustive `4`-circuit elimination up to `K ≤ 58` (`>3,500×` candidate volume). Pushing beyond `K = 80` or `m ≥ 5` requires multi-limb (`256`-bit+) modular arithmetic or lattice/LLL reduction in `DISPROVE-002` Phase 3.

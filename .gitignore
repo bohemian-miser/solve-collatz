@@ -9,3 +9,4 @@ __pycache__/
 *.log
 search/candidates_out/
 site/
+search/mcircuit_hunter/mcircuit_hunter
