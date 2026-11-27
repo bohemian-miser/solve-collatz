@@ -1,5 +1,11 @@
 {
   "schema": "solve-anything-claims/v1",
-  "claims": {},
-  "updated_at": "2026-11-27T14:47:51Z"
+  "claims": {
+    "PROVE-A1": {
+      "user": "bohemian-miser",
+      "claimed_at": "2026-11-27T14:56:43Z",
+      "expires_at": "2026-11-28T14:56:43Z"
+    }
+  },
+  "updated_at": "2026-11-27T14:56:43Z"
 }
