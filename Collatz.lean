@@ -8,6 +8,7 @@ public import Challenge
 public import Collatz.Core.Basic
 public import Collatz.Core.GeneralMaps
 public import Collatz.Core.Syracuse
+public import Collatz.Core.TwoAdic
 public import Collatz.Disprove.Cert
 public import Collatz.Known.TerrasParity
 public import Collatz.Known.SteinerCircuit
