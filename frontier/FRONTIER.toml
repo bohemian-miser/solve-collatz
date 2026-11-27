@@ -71,9 +71,9 @@ id = "KNOWN-003"
 track = "Known"
 status = "IN_PROGRESS"
 title = "Eliahou (1993) / Simons-de Weger (2005) cycle-length lower bounds via Baker/continued fractions"
-lean_file = "Collatz/Known/CycleLengthBounds.lean"
-needs = ["KNOWN-002"]
-barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fails on 3n-1, 5n+1, Z_<0, Z_2). Proved: minimal-element SyracuseCycle <-> HasNontrivialCycle bridge, exact Eliahou product identity, two-sided bounds 3^k < 2^S and 2^S M^k < (3M+1)^k, linear gap bounds, and kernel-verified elimination for M=1000 (k >= 41, len >= 106) and M=10^6 (k >= 1001, len >= 2588). Open: in-kernel finite-stopping-time verification up to 2^68 to lift the lower bound to Eliahou's 17,087,915 (fixed-m-circuit Simons-de Weger / Baker reductions belong in PROVE-B1)."
+lean_file = "Collatz/Known/CycleLengthBounds.lean, Collatz/Known/EliahouConvergents.lean"
+needs = ["KNOWN-002", "PROVE-C1"]
+barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fails on 3n-1, 5n+1, Z_<0, Z_2). Phase 1 (CycleLengthBounds.lean): minimal-element SyracuseCycle <-> HasNontrivialCycle bridge, exact Eliahou product identity, two-sided bounds 3^k < 2^S and 2^S M^k < (3M+1)^k, linear gap bounds, and kernel elimination for M=1000 (k >= 41, len >= 106) and M=10^6 (k >= 1001, len >= 2588). Phase 2 (EliahouConvergents.lean): unconditional mod-4096 lifted kernel stopping-time verification for all 2 <= n < 32768 (1582 uncovered checks <= 105 steps) forcing 32768 <= n_min, exact log_2(3) continued-fraction convergents & Farey determinant/separation theory, UNCONDITIONAL cycle-length lower bounds K >= 306, S >= 485, K + S >= 791 (zero external hypotheses, bridged to HasNontrivialCycle), sharp conditional CF lifting M=10^6 (K >= 2966, len >= 7667), M=10^7 (K >= 10946, len >= 28295), and M=3*10^8 (K >= 16266, len >= 42048), plus Barrier 1-5 separations. Open: in-kernel finite-stopping-time verification up to 2^68 to lift the unconditional lower bound to Eliahou's 17,087,915."
 
 [[node]]
 id = "KNOWN-004"
