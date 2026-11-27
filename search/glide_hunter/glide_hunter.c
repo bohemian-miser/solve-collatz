@@ -1,22 +1,24 @@
 /*
  * glide_hunter.c — High-throughput Collatz (3n + 1) stopping-time & extreme-glide hunter.
  *
- * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-003` Phase 4).
+ * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-003` Phase 5).
  *
  * Features:
- *   - Strict `__uint128_t` overflow detection (zero silent wraparound; `overflow_count` audited).
- *   - Configurable mod-2^B affine stopping-time drop sieve (`--sieve-bits 0|16|18|20`, default 20):
- *     - mod 2^16: 63,422 / 65,536 (96.7743%) residues drop < n in <= 26 steps (n_min <= 24).
- *     - mod 2^18: 254,649 / 262,144 (97.1409%) residues drop < n in <= 29 steps (n_min <= 24).
- *     - mod 2^20: 1,021,248 / 1,048,576 (97.3938%) residues drop < n, paired with a 128 KiB
- *       L2-resident fast-skip bitset for n >= TAU_CACHE_CAP.
- *   - Syracuse odd-step shortcut (`ctz128`) with exact first-drop stopping-time recovery.
+ *   - Strict `uint64_t` -> `__uint128_t` -> `bigint_t` 3-tier arithmetic (zero silent wraparound;
+ *     `overflow_count` and `u128_bigint_fallbacks` audited).
+ *   - Configurable mod-2^B affine stopping-time drop sieve (`--sieve-bits 0|16|18|20|22|24`):
+ *     - mod 2^20: 1,021,248 / 1,048,576 (97.3938%) residues drop < n.
+ *     - mod 2^22: 4,101,082 / 4,194,304 (97.7774%) residues drop < n.
+ *     - mod 2^24: 16,490,635 / 16,777,216 (98.2918%) residues drop < n, leaving only 286,581
+ *       uncovered residues (`1.7082%`), traversed directly via `g_uncovered[]` for n >= tau_cap.
+ *   - Syracuse odd-step shortcut (`__builtin_ctzll` / `ctz128`) with exact first-drop recovery.
  *   - Block-parallel deterministic execution (`R <= L + L/32` + explicit `m < block_L` guard).
  *   - Mode 1 (`--range-end N`): verifies finite stopping time for all 1 <= n <= N and tracks
  *     exact record stopping times, record total stopping times, and exact peak-ratio glides.
- *   - Mode 2 (`--mersenne-max K`): stress-tests Mersenne lifts `2^k*{1,3,27} - 1` AND Terras /
- *     Roosendaal high-glide record lifts `2^k*{703,9663,77671,319804831} - 1` up to k <= K
- *     with arbitrary-precision `bigint_t` fallback.
+ *   - Mode 2 (`--mersenne-max K`): multi-threaded structured high-glide stress tests across
+ *     Mersenne lifts `2^k*{1,3,27}-1`, extended lifts `2^k*{5,7,9}-1`, `2^k+1`, `2^k-3` (k>=2),
+ *     and Terras/Roosendaal lifts `2^k*{703,9663,77671,319804831}-1` up to k <= K with exact
+ *     `bigint_t` arithmetic.
  *   - Explicit `--max-steps` budget (zero silent truncation) with Brent cycle detection and
  *     Lean-ready `NontrivialCycleCert` / divergence diagnostics on any non-dropping seed.
  *   - Deterministic, RFC-8259-strict, SHA-256-ready canonical JSON output.
@@ -38,9 +40,9 @@
 
 __extension__ typedef unsigned __int128 u128;
 
-#define MAX_SIEVE_BITS 20U
+#define MAX_SIEVE_BITS 24U
 #define MAX_SIEVE_SIZE (1U << MAX_SIEVE_BITS)
-#define DEFAULT_SIEVE_BITS 20U
+#define DEFAULT_SIEVE_BITS 24U
 #define TAU_CACHE_CAP 250000000ULL
 #define SEQ_CUTOFF (1ULL << 20)
 #define MAX_RECORD_CAP 2048U
@@ -49,6 +51,7 @@ __extension__ typedef unsigned __int128 u128;
 #define MAX_ALLOWED_STEPS 100000000U
 #define MAX_MERSENNE_K 4000ULL
 
+static const uint64_t U64_SAFE_3N1 = (UINT64_MAX - 1ULL) / 3ULL;
 static const u128 U128_SAFE_3N1 = (~(u128)0 - 1U) / 3U;
 
 /* 16-byte affine pre-drop descriptor (`shift_s == 0` means no guaranteed drop within B halvings). */
@@ -110,15 +113,27 @@ typedef struct {
     char last_dec[256];
 } failure_diagnostic_t;
 
-/* 16 MiB affine table + 128 KiB L2-resident drop bitset. */
-static sieve_entry_t g_sieve[MAX_SIEVE_SIZE];
-static uint64_t g_sieve_fast[MAX_SIEVE_SIZE / 64U];
+/* Dynamic affine table, drop bitset, and sorted uncovered-residue list. */
+static sieve_entry_t *g_sieve = NULL;
+static uint64_t *g_sieve_fast = NULL;
+static uint32_t *g_uncovered = NULL;
+static uint32_t g_uncovered_count = 0U;
 static uint32_t g_sieve_bits = DEFAULT_SIEVE_BITS;
 static uint32_t g_sieve_size = (1U << DEFAULT_SIEVE_BITS);
 static uint32_t g_sieve_mask = (1U << DEFAULT_SIEVE_BITS) - 1U;
 static uint8_t g_sieve_max_steps = 0U;
 static uint16_t g_sieve_max_min_n = 0U;
 static double g_sieve_max_ratio = 1.0;
+
+static void free_sieve(void) {
+    free(g_sieve);
+    free(g_sieve_fast);
+    free(g_uncovered);
+    g_sieve = NULL;
+    g_sieve_fast = NULL;
+    g_uncovered = NULL;
+    g_uncovered_count = 0U;
+}
 
 static inline int ctz128(u128 x) {
     uint64_t lo = (uint64_t)x;
@@ -180,25 +195,41 @@ static double ratio_to_double(u128 p, uint64_t n) {
     return (double)p / (double)n;
 }
 
-static uint32_t init_sieve(uint32_t sieve_bits) {
-    memset(g_sieve, 0, sizeof(g_sieve));
-    memset(g_sieve_fast, 0, sizeof(g_sieve_fast));
+static bool init_sieve(uint32_t sieve_bits, uint32_t *out_covered) {
+    free_sieve();
     g_sieve_bits = sieve_bits;
     g_sieve_size = (sieve_bits == 0U) ? 1U : (1U << sieve_bits);
     g_sieve_mask = g_sieve_size - 1U;
     g_sieve_max_steps = 0U;
     g_sieve_max_min_n = 0U;
     g_sieve_max_ratio = 1.0;
+    *out_covered = 0U;
 
     if (sieve_bits == 0U) {
-        return 0U;
+        return true;
+    }
+    if (sieve_bits > MAX_SIEVE_BITS) {
+        return false;
+    }
+
+    g_sieve = (sieve_entry_t *)malloc((size_t)g_sieve_size * sizeof(sieve_entry_t));
+    g_sieve_fast = (uint64_t *)calloc((size_t)(g_sieve_size / 64U), sizeof(uint64_t));
+    size_t uncov_cap = (size_t)g_sieve_size / 16U + 1024U;
+    if (uncov_cap > (size_t)g_sieve_size) {
+        uncov_cap = (size_t)g_sieve_size;
+    }
+    g_uncovered = (uint32_t *)malloc(uncov_cap * sizeof(uint32_t));
+    if (!g_sieve || !g_sieve_fast || !g_uncovered) {
+        free_sieve();
+        return false;
     }
 
     uint32_t covered = 0U;
     for (uint32_t r = 0U; r < g_sieve_size; r++) {
-        u128 pow3 = 1U;
-        u128 add_c = 0U;
-        u128 val = r;
+        /* For B <= 24, pow3 <= 3^24 < 2^39 and add_c < 2^39, strictly within uint64_t. */
+        uint64_t pow3 = 1ULL;
+        uint64_t add_c = 0ULL;
+        uint64_t val = r;
         uint8_t s = 0U;
         uint8_t k = 0U;
         double max_ratio = 1.0;
@@ -206,26 +237,26 @@ static uint32_t init_sieve(uint32_t sieve_bits) {
         uint16_t min_n = 0U;
 
         while (s < sieve_bits) {
-            if (((uint64_t)val & 1ULL) == 0ULL) {
+            if ((val & 1ULL) == 0ULL) {
                 val >>= 1;
                 s++;
             } else {
                 k++;
-                pow3 *= 3U;
-                add_c = 3U * add_c + ((u128)1U << s);
+                pow3 *= 3ULL;
+                add_c = 3ULL * add_c + (1ULL << s);
                 double upper = ((double)pow3 + (double)add_c / (double)g_sieve_size) /
-                               (double)((u128)1U << s);
+                               (double)(1ULL << s);
                 if (upper > max_ratio) {
                     max_ratio = upper;
                 }
-                val = (3U * val + 1U) >> 1;
+                val = (3ULL * val + 1ULL) >> 1;
                 s++;
             }
-            u128 pow2s = (u128)1U << s;
+            uint64_t pow2s = 1ULL << s;
             if (pow3 < pow2s) {
-                u128 denom = pow2s - pow3;
-                u128 mn = add_c / denom;
-                if (mn <= 65535U && pow3 <= UINT32_MAX && add_c <= UINT32_MAX) {
+                uint64_t denom = pow2s - pow3;
+                uint64_t mn = add_c / denom;
+                if (mn <= 65535ULL && pow3 <= UINT32_MAX && add_c <= UINT32_MAX) {
                     drops = true;
                     min_n = (uint16_t)mn;
                 }
@@ -255,21 +286,105 @@ static uint32_t init_sieve(uint32_t sieve_bits) {
                 g_sieve_max_ratio = (double)safe_ratio;
             }
             covered++;
+        } else {
+            g_sieve[r] = (sieve_entry_t){0};
+            if (g_uncovered_count >= uncov_cap) {
+                uncov_cap *= 2U;
+                uint32_t *grown = (uint32_t *)realloc(g_uncovered, uncov_cap * sizeof(uint32_t));
+                if (!grown) {
+                    free_sieve();
+                    return false;
+                }
+                g_uncovered = grown;
+            }
+            g_uncovered[g_uncovered_count++] = r;
         }
     }
-    return covered;
+    *out_covered = covered;
+    return true;
 }
 
 /* ---------------- Arbitrary-Precision BigInt Fallback & Diagnostics ---------------- */
 
-static void bi_from_u64(bigint_t *a, uint64_t v) {
-    memset(a->limbs, 0, sizeof(a->limbs));
-    if (v == 0ULL) {
-        a->len = 0;
-    } else {
-        a->limbs[0] = v;
-        a->len = 1;
+static void bi_copy(bigint_t *dst, const bigint_t *src) {
+    dst->len = src->len;
+    if (src->len > 0U) {
+        memcpy(dst->limbs, src->limbs, src->len * sizeof(uint64_t));
     }
+}
+
+static void bi_from_u64(bigint_t *a, uint64_t v) {
+    a->limbs[0] = v;
+    a->len = (v == 0ULL) ? 0U : 1U;
+}
+
+static void bi_from_u128(bigint_t *a, u128 v) {
+    if (v == 0U) {
+        a->len = 0U;
+        return;
+    }
+    a->limbs[0] = (uint64_t)v;
+    uint64_t hi = (uint64_t)(v >> 64);
+    if (hi != 0ULL) {
+        a->limbs[1] = hi;
+        a->len = 2U;
+    } else {
+        a->len = 1U;
+    }
+}
+
+static bool bi_add_u64(bigint_t *a, uint64_t v) {
+    if (v == 0ULL) {
+        return true;
+    }
+    if (a->len == 0U) {
+        bi_from_u64(a, v);
+        return true;
+    }
+    u128 sum = (u128)a->limbs[0] + (u128)v;
+    a->limbs[0] = (uint64_t)sum;
+    uint64_t carry = (uint64_t)(sum >> 64);
+    size_t i = 1U;
+    while (carry != 0ULL && i < a->len) {
+        u128 s2 = (u128)a->limbs[i] + (u128)carry;
+        a->limbs[i] = (uint64_t)s2;
+        carry = (uint64_t)(s2 >> 64);
+        i++;
+    }
+    if (carry != 0ULL) {
+        if (a->len >= BIGINT_MAX_LIMBS) {
+            return false;
+        }
+        a->limbs[a->len++] = carry;
+    }
+    return true;
+}
+
+static bool bi_sub_u64(bigint_t *a, uint64_t v) {
+    if (v == 0ULL) {
+        return true;
+    }
+    if (a->len == 0U) {
+        return false;
+    }
+    uint64_t borrow = v;
+    for (size_t i = 0U; i < a->len && borrow != 0ULL; i++) {
+        uint64_t cur = a->limbs[i];
+        if (cur >= borrow) {
+            a->limbs[i] = cur - borrow;
+            borrow = 0ULL;
+        } else {
+            a->limbs[i] = cur - borrow; /* Unsigned wrap mod 2^64 borrows 1 from next limb. */
+            borrow = 1ULL;
+        }
+    }
+    if (borrow != 0ULL) {
+        return false;
+    }
+    while (a->len > 0U && a->limbs[a->len - 1] == 0ULL) {
+        a->len--;
+    }
+    return true;
 }
 
 static bool bi_is_one(const bigint_t *a) {
@@ -322,23 +437,6 @@ static bool bi_shl(bigint_t *a, uint32_t shift) {
     size_t real_len = a->len + word_shift + ((carry != 0ULL) ? 1U : 0U);
     memcpy(a->limbs, out, real_len * sizeof(uint64_t));
     a->len = real_len;
-    return true;
-}
-
-static bool bi_sub1(bigint_t *a) {
-    if (a->len == 0) {
-        return false;
-    }
-    for (size_t i = 0; i < a->len; i++) {
-        if (a->limbs[i] > 0ULL) {
-            a->limbs[i] -= 1ULL;
-            break;
-        }
-        a->limbs[i] = ~0ULL;
-    }
-    while (a->len > 0 && a->limbs[a->len - 1] == 0ULL) {
-        a->len--;
-    }
     return true;
 }
 
@@ -589,6 +687,76 @@ static void print_failure_diagnostic_stderr(const failure_diagnostic_t *diag) {
     }
 }
 
+/* Exact bigint_t orbit continuation when u128 hits U128_SAFE_3N1. */
+static bool exact_orbit_stats_bi(uint64_t n, const bigint_t *start_cur, const bigint_t *start_peak,
+                                 uint32_t start_total, uint32_t start_stop, bool start_have_stop,
+                                 uint32_t max_steps, uint32_t *out_stop, uint32_t *out_total,
+                                 u128 *out_peak, uint64_t *overflow_count) {
+    bigint_t n_bi, cur, peak;
+    bi_from_u64(&n_bi, n);
+    bi_copy(&cur, start_cur);
+    bi_copy(&peak, start_peak);
+    uint32_t total = start_total;
+    uint32_t stop = start_stop;
+    bool have_stop = start_have_stop;
+
+    while (!bi_is_one(&cur)) {
+        if (total >= max_steps) {
+            return false;
+        }
+        if ((cur.limbs[0] & 1ULL) == 0ULL) {
+            uint32_t tz = bi_rshift_tz(&cur);
+            if (!have_stop && bi_cmp(&cur, &n_bi) < 0) {
+                bigint_t tmp;
+                bi_copy(&tmp, &cur);
+                (void)bi_shl(&tmp, tz);
+                uint32_t j = 1U;
+                bi_rshift_one(&tmp);
+                while (j < tz && bi_cmp(&tmp, &n_bi) >= 0) {
+                    bi_rshift_one(&tmp);
+                    j++;
+                }
+                stop = total + j;
+                have_stop = true;
+            }
+            total += tz;
+        } else {
+            if (!bi_mul3_add1(&cur)) {
+                (*overflow_count)++;
+                return false;
+            }
+            if (bi_cmp(&cur, &peak) > 0) {
+                bi_copy(&peak, &cur);
+            }
+            bigint_t pre_shift;
+            bi_copy(&pre_shift, &cur);
+            uint32_t tz = bi_rshift_tz(&cur);
+            if (!have_stop && bi_cmp(&cur, &n_bi) < 0) {
+                uint32_t j = 1U;
+                bi_rshift_one(&pre_shift);
+                while (j < tz && bi_cmp(&pre_shift, &n_bi) >= 0) {
+                    bi_rshift_one(&pre_shift);
+                    j++;
+                }
+                stop = total + 1U + j;
+                have_stop = true;
+            }
+            total += 1U + tz;
+        }
+    }
+    if (peak.len > 2U) {
+        (*overflow_count)++;
+        return false;
+    }
+    *out_stop = stop;
+    *out_total = total;
+    *out_peak = (peak.len == 0U)
+                    ? (u128)0U
+                    : ((peak.len == 1U) ? (u128)peak.limbs[0]
+                                        : (((u128)peak.limbs[1] << 64) | (u128)peak.limbs[0]));
+    return true;
+}
+
 /* Compute exact full orbit to 1 for a single u64 seed (used only for rare record seeds). */
 static bool exact_orbit_stats_u64(uint64_t n, uint32_t max_steps, uint32_t *out_stop,
                                   uint32_t *out_total, u128 *out_peak,
@@ -626,8 +794,12 @@ static bool exact_orbit_stats_u64(uint64_t n, uint32_t max_steps, uint32_t *out_
             total += (uint32_t)tz;
         } else {
             if (cur > U128_SAFE_3N1) {
-                (*overflow_count)++;
-                return false;
+                bigint_t cur_bi, peak_bi;
+                bi_from_u128(&cur_bi, cur);
+                bi_from_u128(&peak_bi, peak);
+                return exact_orbit_stats_bi(n, &cur_bi, &peak_bi, total, stop, have_stop,
+                                            max_steps, out_stop, out_total, out_peak,
+                                            overflow_count);
             }
             u128 nxt = 3U * cur + 1U;
             if (nxt > peak) {
@@ -664,17 +836,148 @@ static bool push_candidate(record_list_t *list, uint64_t n, uint32_t stop, uint3
     return true;
 }
 
+/* Exact bigint_t fallback when Mode 1 exceeds U128_SAFE_3N1. */
+static bool verify_seed_until_below_bi(uint64_t n, uint64_t threshold, u128 start_cur_u128,
+                                       u128 start_peak_u128, uint32_t start_steps,
+                                       uint32_t start_stop, bool start_have_stop,
+                                       uint32_t max_steps, uint32_t *out_stop,
+                                       uint32_t *out_steps_to_cur, uint64_t *out_cur_below,
+                                       u128 *out_peak, uint64_t *overflow_count,
+                                       uint64_t *u128_fallbacks, const char **fail_reason) {
+    (*u128_fallbacks)++;
+    bigint_t n_bi, thresh_bi, cur, peak;
+    bi_from_u64(&n_bi, n);
+    bi_from_u64(&thresh_bi, threshold);
+    bi_from_u128(&cur, start_cur_u128);
+    bi_from_u128(&peak, start_peak_u128);
+    uint32_t steps = start_steps;
+    uint32_t stop = start_stop;
+    bool have_stop = start_have_stop;
+
+    while (bi_cmp(&cur, &thresh_bi) >= 0) {
+        if ((cur.limbs[0] & 1ULL) == 0ULL) {
+            bigint_t pre_shift;
+            bi_copy(&pre_shift, &cur);
+            uint32_t tz = bi_rshift_tz(&cur);
+            if (!have_stop && bi_cmp(&cur, &n_bi) < 0) {
+                uint32_t j = 1U;
+                bi_rshift_one(&pre_shift);
+                while (j < tz && bi_cmp(&pre_shift, &n_bi) >= 0) {
+                    bi_rshift_one(&pre_shift);
+                    j++;
+                }
+                stop = steps + j;
+                have_stop = true;
+            }
+            steps += tz;
+        } else {
+            if (!bi_mul3_add1(&cur)) {
+                (*overflow_count)++;
+                *fail_reason = "bigint_limb_overflow";
+                return false;
+            }
+            if (bi_cmp(&cur, &peak) > 0) {
+                bi_copy(&peak, &cur);
+            }
+            bigint_t pre_shift;
+            bi_copy(&pre_shift, &cur);
+            uint32_t tz = bi_rshift_tz(&cur);
+            if (!have_stop && bi_cmp(&cur, &n_bi) < 0) {
+                uint32_t j = 1U;
+                bi_rshift_one(&pre_shift);
+                while (j < tz && bi_cmp(&pre_shift, &n_bi) >= 0) {
+                    bi_rshift_one(&pre_shift);
+                    j++;
+                }
+                stop = steps + 1U + j;
+                have_stop = true;
+            }
+            steps += 1U + tz;
+        }
+        if (steps > max_steps) {
+            *fail_reason = "step_budget_exceeded";
+            return false;
+        }
+    }
+    *out_stop = stop;
+    *out_steps_to_cur = steps;
+    *out_cur_below = (cur.len == 0U) ? 0ULL : cur.limbs[0];
+    *out_peak = (peak.len <= 2U)
+                    ? ((peak.len == 0U)
+                           ? (u128)0U
+                           : ((peak.len == 1U)
+                                  ? (u128)peak.limbs[0]
+                                  : (((u128)peak.limbs[1] << 64) | (u128)peak.limbs[0])))
+                    : (~(u128)0);
+    return true;
+}
+
 /* Simulate one seed n >= 2 until cur < threshold (where threshold <= n). */
 static inline bool verify_seed_until_below(uint64_t n, uint64_t threshold, uint32_t max_steps,
                                            uint32_t *out_stop, uint32_t *out_steps_to_cur,
                                            uint64_t *out_cur_below, u128 *out_peak,
-                                           uint64_t *overflow_count, const char **fail_reason) {
-    u128 cur = n;
-    u128 peak = n;
+                                           uint64_t *overflow_count, uint64_t *u128_fallbacks,
+                                           const char **fail_reason) {
+    uint64_t c64 = n;
+    uint64_t p64 = n;
     uint32_t steps = 0U;
     uint32_t stop = 0U;
     bool have_stop = false;
 
+    /* Tier 1: fast native uint64_t loop while 3 * c64 + 1 fits in uint64_t. */
+    while (c64 >= threshold && c64 <= U64_SAFE_3N1) {
+        if ((c64 & 1ULL) == 0ULL) {
+            int tz = __builtin_ctzll(c64);
+            uint64_t nxt = c64 >> tz;
+            if (!have_stop && nxt < n) {
+                uint32_t j = 1U;
+                uint64_t tmp = c64 >> 1;
+                while (j < (uint32_t)tz && tmp >= n) {
+                    tmp >>= 1;
+                    j++;
+                }
+                stop = steps + j;
+                have_stop = true;
+            }
+            c64 = nxt;
+            steps += (uint32_t)tz;
+        } else {
+            uint64_t nxt = 3ULL * c64 + 1ULL;
+            if (nxt > p64) {
+                p64 = nxt;
+            }
+            int tz = __builtin_ctzll(nxt);
+            uint64_t reduced = nxt >> tz;
+            if (!have_stop && reduced < n) {
+                uint32_t j = 1U;
+                uint64_t tmp = nxt >> 1;
+                while (j < (uint32_t)tz && tmp >= n) {
+                    tmp >>= 1;
+                    j++;
+                }
+                stop = steps + 1U + j;
+                have_stop = true;
+            }
+            c64 = reduced;
+            steps += 1U + (uint32_t)tz;
+        }
+        if (steps > max_steps) {
+            *fail_reason = "step_budget_exceeded";
+            return false;
+        }
+    }
+
+    if (c64 < threshold) {
+        *out_stop = stop;
+        *out_steps_to_cur = steps;
+        *out_cur_below = c64;
+        *out_peak = (u128)p64;
+        return true;
+    }
+
+    /* Tier 2: exact u128 continuation when intermediate orbit exceeds 62.4 bits. */
+    u128 cur = (u128)c64;
+    u128 peak = (u128)p64;
     while (cur >= threshold) {
         if (((uint64_t)cur & 1ULL) == 0ULL) {
             int tz = ctz128(cur);
@@ -693,9 +996,10 @@ static inline bool verify_seed_until_below(uint64_t n, uint64_t threshold, uint3
             steps += (uint32_t)tz;
         } else {
             if (cur > U128_SAFE_3N1) {
-                (*overflow_count)++;
-                *fail_reason = "u128_overflow";
-                return false;
+                return verify_seed_until_below_bi(n, threshold, cur, peak, steps, stop, have_stop,
+                                                  max_steps, out_stop, out_steps_to_cur,
+                                                  out_cur_below, out_peak, overflow_count,
+                                                  u128_fallbacks, fail_reason);
             }
             u128 nxt = 3U * cur + 1U;
             if (nxt > peak) {
@@ -744,6 +1048,7 @@ typedef struct {
     record_list_t cand_peak;
     uint64_t sieved_count;
     uint64_t overflow_count;
+    uint64_t u128_fallbacks;
     uint64_t failure_seed;
     const char *failure_reason;
     bool ok;
@@ -762,20 +1067,26 @@ static void *worker_run(void *arg) {
     const uint64_t tau_cap = ctx->tau_cap;
     const uint32_t max_steps = ctx->max_steps;
     const uint32_t sieve_mask = g_sieve_mask;
+    const uint64_t sieve_size = (uint64_t)g_sieve_size;
     const bool use_sieve = (g_sieve_bits > 0U);
     const bool fast_l1_eligible = use_sieve && (init_best_stop > g_sieve_max_steps) &&
                                   (init_best_ratio > g_sieve_max_ratio);
+    uint64_t fast_thresh = (tau_cap > sieve_size) ? tau_cap : sieve_size;
+    if ((uint64_t)g_sieve_max_min_n + 1ULL > fast_thresh) {
+        fast_thresh = (uint64_t)g_sieve_max_min_n + 1ULL;
+    }
     uint64_t sieved = 0ULL;
 
-    for (uint64_t n = ctx->start_n; n <= ctx->end_n; n++) {
-        /* Hot L1-resident bitset path when n >= tau_cap and global records clear all sieve bounds. */
-        if (fast_l1_eligible && n >= tau_cap && n > (uint64_t)g_sieve_max_min_n) {
-            uint32_t r = (uint32_t)(n & sieve_mask);
-            if ((g_sieve_fast[r >> 6] >> (r & 63U)) & 1ULL) {
-                sieved++;
-                continue;
-            }
-        } else if (use_sieve) {
+    /* Phase A: exact tau-cached or pre-threshold region [start_n, min(end_n, fast_thresh - 1)]. */
+    uint64_t phase_a_end = ctx->end_n;
+    if (fast_l1_eligible && phase_a_end >= fast_thresh) {
+        phase_a_end = (fast_thresh > 0ULL) ? (fast_thresh - 1ULL) : 0ULL;
+    }
+
+    for (uint64_t n = ctx->start_n; fast_l1_eligible ? (n <= phase_a_end && fast_thresh > 0ULL)
+                                                     : (n <= ctx->end_n);
+         n++) {
+        if (use_sieve && n >= sieve_size) {
             const sieve_entry_t *ent = &g_sieve[n & sieve_mask];
             if (ent->shift_s > 0U && n > (uint64_t)ent->min_n && init_best_stop > ent->steps &&
                 init_best_ratio > (double)ent->max_pre_drop_ratio) {
@@ -817,7 +1128,8 @@ static void *worker_run(void *arg) {
         u128 peak = 0U;
         const char *fail_reason = "unknown";
         if (!verify_seed_until_below(n, block_L, max_steps, &stop, &steps_to_cur, &cur_below,
-                                     &peak, &ctx->overflow_count, &fail_reason)) {
+                                     &peak, &ctx->overflow_count, &ctx->u128_fallbacks,
+                                     &fail_reason)) {
             ctx->ok = false;
             ctx->failure_seed = n;
             ctx->failure_reason = fail_reason;
@@ -866,6 +1178,89 @@ static void *worker_run(void *arg) {
         }
     }
 
+    /* Phase B: jump directly across uncovered residues mod 2^B when n >= max(tau_cap, 2^B). */
+    if (fast_l1_eligible && ctx->end_n >= fast_thresh) {
+        uint64_t tail_start = (ctx->start_n > fast_thresh) ? ctx->start_n : fast_thresh;
+        if (tail_start <= ctx->end_n) {
+            uint64_t total_tail = ctx->end_n - tail_start + 1ULL;
+            uint64_t processed_uncovered = 0ULL;
+
+            if (g_uncovered_count > 0U) {
+                uint64_t base = tail_start & ~((uint64_t)sieve_mask);
+                uint32_t start_rem = (uint32_t)(tail_start & (uint64_t)sieve_mask);
+                uint32_t lo = 0U;
+                uint32_t hi = g_uncovered_count;
+                while (lo < hi) {
+                    uint32_t mid = lo + ((hi - lo) >> 1);
+                    if (g_uncovered[mid] < start_rem) {
+                        lo = mid + 1U;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                uint32_t idx = lo;
+                if (idx >= g_uncovered_count) {
+                    idx = 0U;
+                    if (base <= UINT64_MAX - sieve_size) {
+                        base += sieve_size;
+                    } else {
+                        idx = g_uncovered_count;
+                    }
+                }
+                while (idx < g_uncovered_count) {
+                    uint64_t n = base + (uint64_t)g_uncovered[idx];
+                    if (n < base || n > ctx->end_n) {
+                        break;
+                    }
+                    processed_uncovered++;
+
+                    uint32_t stop = 0U;
+                    uint32_t steps_to_cur = 0U;
+                    uint64_t cur_below = 0ULL;
+                    u128 peak = 0U;
+                    const char *fail_reason = "unknown";
+                    if (!verify_seed_until_below(n, block_L, max_steps, &stop, &steps_to_cur,
+                                                 &cur_below, &peak, &ctx->overflow_count,
+                                                 &ctx->u128_fallbacks, &fail_reason)) {
+                        ctx->ok = false;
+                        ctx->failure_seed = n;
+                        ctx->failure_reason = fail_reason;
+                        return NULL;
+                    }
+                    if (stop > best_stop) {
+                        best_stop = stop;
+                        if (!push_candidate(&ctx->cand_stop, n, stop, 0U, peak)) {
+                            ctx->ok = false;
+                            ctx->failure_seed = n;
+                            ctx->failure_reason = "record_cap_exceeded";
+                            return NULL;
+                        }
+                    }
+                    if (cmp_ratio_u128_u64(peak, n, best_peak, best_peak_n) > 0) {
+                        best_peak = peak;
+                        best_peak_n = n;
+                        if (!push_candidate(&ctx->cand_peak, n, stop, 0U, peak)) {
+                            ctx->ok = false;
+                            ctx->failure_seed = n;
+                            ctx->failure_reason = "record_cap_exceeded";
+                            return NULL;
+                        }
+                    }
+
+                    idx++;
+                    if (idx == g_uncovered_count) {
+                        idx = 0U;
+                        if (base > UINT64_MAX - sieve_size) {
+                            break;
+                        }
+                        base += sieve_size;
+                    }
+                }
+            }
+            sieved += (total_tail - processed_uncovered);
+        }
+    }
+
     ctx->sieved_count = sieved;
     ctx->ok = true;
     return NULL;
@@ -876,6 +1271,7 @@ typedef struct {
     uint64_t verified_count;
     uint64_t sieved_count;
     uint64_t overflow_count;
+    uint64_t u128_fallbacks;
     uint64_t tau_exact_up_to;
     uint32_t sieve_bits;
     uint32_t sieve_modulus;
@@ -955,10 +1351,15 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
     memset(res, 0, sizeof(*res));
     res->range_end = range_end;
     res->sieve_bits = sieve_bits;
-    res->sieve_covered = init_sieve(sieve_bits);
+    if (!init_sieve(sieve_bits, &res->sieve_covered)) {
+        fprintf(stderr, "ERROR: Failed to initialize mod-2^%u sieve\n", sieve_bits);
+        res->failure_reason = "allocation_failed";
+        return false;
+    }
     res->sieve_modulus = g_sieve_size;
     if (range_end == 0ULL) {
         res->all_converged = true;
+        free_sieve();
         return true;
     }
 
@@ -970,6 +1371,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
     if (!tau) {
         fprintf(stderr, "ERROR: Failed to allocate tau cache of %" PRIu64 " entries\n", tau_cap);
         res->failure_reason = "allocation_failed";
+        free_sieve();
         return false;
     }
     res->tau_exact_up_to = tau_cap - 1ULL;
@@ -1006,6 +1408,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                     diagnose_non_dropping_seed(&sbi, "mode1", "", 0U, max_steps,
                                                res->failure_reason, diag);
                     free(tau);
+                    free_sieve();
                     return false;
                 }
                 tau[n] = (uint16_t)tot;
@@ -1021,6 +1424,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                         diagnose_non_dropping_seed(&sbi, "mode1", "", 0U, max_steps,
                                                    res->failure_reason, diag);
                         free(tau);
+                        free_sieve();
                         return false;
                     }
                     best_total = et;
@@ -1028,6 +1432,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                         res->failure_seed = n;
                         res->failure_reason = "record_cap_exceeded";
                         free(tau);
+                        free_sieve();
                         return false;
                     }
                 }
@@ -1042,13 +1447,14 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
         u128 peak = 0U;
         const char *fail_reason = "unknown";
         if (!verify_seed_until_below(n, n, max_steps, &stop, &steps_to_cur, &cur_below, &peak,
-                                     &res->overflow_count, &fail_reason)) {
+                                     &res->overflow_count, &res->u128_fallbacks, &fail_reason)) {
             res->failure_seed = n;
             res->failure_reason = fail_reason;
             bigint_t sbi;
             bi_from_u64(&sbi, n);
             diagnose_non_dropping_seed(&sbi, "mode1", "", 0U, max_steps, fail_reason, diag);
             free(tau);
+            free_sieve();
             return false;
         }
         uint32_t tot = steps_to_cur + (uint32_t)tau[cur_below];
@@ -1060,6 +1466,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
             bi_from_u64(&sbi, n);
             diagnose_non_dropping_seed(&sbi, "mode1", "", 0U, max_steps, res->failure_reason, diag);
             free(tau);
+            free_sieve();
             return false;
         }
         tau[n] = (uint16_t)tot;
@@ -1078,6 +1485,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                 diagnose_non_dropping_seed(&sbi, "mode1", "", 0U, max_steps,
                                            res->failure_reason, diag);
                 free(tau);
+                free_sieve();
                 return false;
             }
             if (need_stop && es > best_stop) {
@@ -1086,6 +1494,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                     res->failure_seed = n;
                     res->failure_reason = "record_cap_exceeded";
                     free(tau);
+                    free_sieve();
                     return false;
                 }
             }
@@ -1095,6 +1504,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                     res->failure_seed = n;
                     res->failure_reason = "record_cap_exceeded";
                     free(tau);
+                    free_sieve();
                     return false;
                 }
             }
@@ -1105,6 +1515,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                     res->failure_seed = n;
                     res->failure_reason = "record_cap_exceeded";
                     free(tau);
+                    free_sieve();
                     return false;
                 }
             }
@@ -1127,6 +1538,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
         free(ctxs);
         free(tids);
         free(tau);
+        free_sieve();
         res->failure_reason = "allocation_failed";
         return false;
     }
@@ -1187,6 +1599,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                 free(ctxs);
                 free(tids);
                 free(tau);
+                free_sieve();
                 return false;
             }
         }
@@ -1194,6 +1607,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
         for (uint32_t t = 0; t < active; t++) {
             res->overflow_count += ctxs[t].overflow_count;
             res->sieved_count += ctxs[t].sieved_count;
+            res->u128_fallbacks += ctxs[t].u128_fallbacks;
             if (!ctxs[t].ok) {
                 res->all_converged = false;
                 res->failure_seed = ctxs[t].failure_seed;
@@ -1205,6 +1619,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                 free(ctxs);
                 free(tids);
                 free(tau);
+                free_sieve();
                 return false;
             }
         }
@@ -1225,6 +1640,7 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
                 free(ctxs);
                 free(tids);
                 free(tau);
+                free_sieve();
                 return false;
             }
         }
@@ -1240,20 +1656,29 @@ static bool run_mode1(uint64_t range_end, uint32_t num_threads, uint32_t sieve_b
     free(ctxs);
     free(tids);
     free(tau);
+    free_sieve();
     return res->all_converged;
 }
 
-static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, uint32_t max_steps,
-                               mersenne_record_t *out, uint64_t *u128_fallbacks,
+static bool test_mersenne_seed(const char *family, uint64_t mult, int64_t offset, uint32_t k,
+                               uint32_t max_steps, mersenne_record_t *out,
                                uint64_t *silent_overflows, failure_diagnostic_t *diag) {
     memset(out, 0, sizeof(*out));
     snprintf(out->family, sizeof(out->family), "%s", family);
     out->k = k;
 
-    /* Exact seed n = mult * 2^k - 1 in bigint_t (always exact). */
+    /* Exact seed n = mult * 2^k + offset in bigint_t (always exact). */
     bigint_t seed_bi;
     bi_from_u64(&seed_bi, mult);
-    if (!bi_shl(&seed_bi, k) || !bi_sub1(&seed_bi)) {
+    bool ok_seed = bi_shl(&seed_bi, k);
+    if (ok_seed) {
+        if (offset >= 0) {
+            ok_seed = bi_add_u64(&seed_bi, (uint64_t)offset);
+        } else {
+            ok_seed = bi_sub_u64(&seed_bi, (uint64_t)(-offset));
+        }
+    }
+    if (!ok_seed || seed_bi.len == 0U) {
         (*silent_overflows)++;
         diagnose_non_dropping_seed(&seed_bi, "mode2", family, k, max_steps,
                                    "bigint_limb_overflow", diag);
@@ -1330,12 +1755,7 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, ui
             out->total_steps = total;
             out->peak_bits = bitlen128(peak);
             bigint_t peak_bi;
-            bi_from_u64(&peak_bi, (uint64_t)peak);
-            if (peak > (u128)UINT64_MAX) {
-                peak_bi.limbs[0] = (uint64_t)peak;
-                peak_bi.limbs[1] = (uint64_t)(peak >> 64);
-                peak_bi.len = 2;
-            }
+            bi_from_u128(&peak_bi, peak);
             double l2_seed = bi_log2(&seed_bi);
             double l2_peak = bi_log2(&peak_bi);
             out->log2_glide_ratio = l2_peak - l2_seed;
@@ -1345,14 +1765,12 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, ui
             u128_to_str(peak, out->peak_dec, sizeof(out->peak_dec));
             return true;
         }
-        (*u128_fallbacks)++;
-    } else {
-        (*u128_fallbacks)++;
     }
 
     /* Exact arbitrary-precision bigint_t fallback (never overflows within BIGINT_MAX_LIMBS). */
-    bigint_t cur = seed_bi;
-    bigint_t peak = seed_bi;
+    bigint_t cur, peak;
+    bi_copy(&cur, &seed_bi);
+    bi_copy(&peak, &seed_bi);
     uint32_t total = 0U;
     uint32_t stop = 0U;
     bool have_stop = false;
@@ -1365,14 +1783,16 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, ui
             return false;
         }
         if ((cur.limbs[0] & 1ULL) == 0ULL) {
+            bigint_t pre_shift;
+            if (!have_stop) {
+                bi_copy(&pre_shift, &cur);
+            }
             uint32_t tz = bi_rshift_tz(&cur);
             if (!have_stop && bi_cmp(&cur, &seed_bi) < 0) {
-                bigint_t tmp = cur;
-                (void)bi_shl(&tmp, tz);
                 uint32_t j = 1U;
-                bi_rshift_one(&tmp);
-                while (j < tz && bi_cmp(&tmp, &seed_bi) >= 0) {
-                    bi_rshift_one(&tmp);
+                bi_rshift_one(&pre_shift);
+                while (j < tz && bi_cmp(&pre_shift, &seed_bi) >= 0) {
+                    bi_rshift_one(&pre_shift);
                     j++;
                 }
                 stop = total + j;
@@ -1387,9 +1807,12 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, ui
                 return false;
             }
             if (bi_cmp(&cur, &peak) > 0) {
-                peak = cur;
+                bi_copy(&peak, &cur);
             }
-            bigint_t pre_shift = cur;
+            bigint_t pre_shift;
+            if (!have_stop) {
+                bi_copy(&pre_shift, &cur);
+            }
             uint32_t tz = bi_rshift_tz(&cur);
             if (!have_stop && bi_cmp(&cur, &seed_bi) < 0) {
                 uint32_t j = 1U;
@@ -1415,6 +1838,46 @@ static bool test_mersenne_seed(const char *family, uint64_t mult, uint32_t k, ui
     out->verified_hits_one = true;
     bi_to_dec(&peak, out->peak_dec, sizeof(out->peak_dec));
     return true;
+}
+
+typedef struct {
+    const char *family;
+    uint64_t mult;
+    int64_t offset;
+    uint32_t k;
+} mode2_job_t;
+
+typedef struct {
+    const mode2_job_t *jobs;
+    size_t total_jobs;
+    size_t tid;
+    size_t num_threads;
+    uint32_t max_steps;
+    mersenne_record_t *recs;
+    uint8_t *ok_flags;
+    uint64_t silent_overflows;
+    bool failed;
+    size_t first_fail_idx;
+    failure_diagnostic_t first_diag;
+} mode2_worker_ctx_t;
+
+static void *mode2_worker_run(void *arg) {
+    mode2_worker_ctx_t *ctx = (mode2_worker_ctx_t *)arg;
+    for (size_t i = ctx->tid; i < ctx->total_jobs; i += ctx->num_threads) {
+        const mode2_job_t *job = &ctx->jobs[i];
+        failure_diagnostic_t local_diag;
+        memset(&local_diag, 0, sizeof(local_diag));
+        bool ok = test_mersenne_seed(job->family, job->mult, job->offset, job->k, ctx->max_steps,
+                                     &ctx->recs[i], &ctx->silent_overflows, &local_diag);
+        ctx->ok_flags[i] = ok ? 1U : 0U;
+        if (!ok) {
+            ctx->failed = true;
+            ctx->first_fail_idx = i;
+            ctx->first_diag = local_diag;
+            return NULL;
+        }
+    }
+    return NULL;
 }
 
 static void print_record_array(FILE *fp, const record_list_t *list, int indent) {
@@ -1514,10 +1977,12 @@ static void write_json_output(FILE *fp, const mode1_result_t *m1, bool run_m2,
         fprintf(fp, "      \"mersenne_max_k\": %u,\n", mersenne_max);
         fprintf(fp,
                 "      \"families\": [\"2^k-1\", \"3*2^k-1\", \"27*2^k-1\", "
+                "\"5*2^k-1\", \"7*2^k-1\", \"9*2^k-1\", \"2^k+1\", \"2^k-3\", "
                 "\"703*2^k-1\", \"9663*2^k-1\", \"77671*2^k-1\", \"319804831*2^k-1\"],\n");
         fprintf(fp,
                 "      \"family_groups\": {\n"
                 "        \"mersenne_lifts\": [\"2^k-1\", \"3*2^k-1\", \"27*2^k-1\"],\n"
+                "        \"extended_lifts\": [\"5*2^k-1\", \"7*2^k-1\", \"9*2^k-1\", \"2^k+1\", \"2^k-3\"],\n"
                 "        \"terras_roosendaal_lifts\": [\"703*2^k-1\", \"9663*2^k-1\", "
                 "\"77671*2^k-1\", \"319804831*2^k-1\"]\n"
                 "      },\n");
@@ -1654,8 +2119,10 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--sieve-bits") == 0 && i + 1 < argc) {
             uint64_t tmp = 0ULL;
             if (!parse_u64(argv[++i], &tmp) ||
-                (tmp != 0ULL && tmp != 16ULL && tmp != 18ULL && tmp != 20ULL)) {
-                fprintf(stderr, "Invalid --sieve-bits value (supported: 0, 16, 18, 20)\n");
+                (tmp != 0ULL && tmp != 16ULL && tmp != 18ULL && tmp != 20ULL && tmp != 22ULL &&
+                 tmp != 24ULL)) {
+                fprintf(stderr,
+                        "Invalid --sieve-bits value (supported: 0, 16, 18, 20, 22, 24)\n");
                 return 2;
             }
             sieve_bits = (uint32_t)tmp;
@@ -1677,7 +2144,7 @@ int main(int argc, char **argv) {
             json_out = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr,
-                    "Usage: %s [--range-end N] [--mersenne-max K] [--sieve-bits 0|16|18|20] "
+                    "Usage: %s [--range-end N] [--mersenne-max K] [--sieve-bits 0|16|18|20|22|24] "
                     "[--max-steps S] [--threads T] [--json-out PATH|-]\n",
                     argv[0]);
             return 0;
@@ -1710,7 +2177,7 @@ int main(int argc, char **argv) {
 
     mersenne_record_t *m2_recs = NULL;
     size_t m2_count = 0U;
-    uint64_t u128_fallbacks = 0ULL;
+    uint64_t u128_fallbacks = m1.u128_fallbacks;
     uint64_t silent_overflows = 0ULL;
     double m2_elapsed = 0.0;
     bool ran_m2 = false;
@@ -1722,39 +2189,136 @@ int main(int argc, char **argv) {
         static const struct {
             const char *name;
             uint64_t mult;
-        } families[7] = {
-            {"2^k-1", 1ULL},
-            {"3*2^k-1", 3ULL},
-            {"27*2^k-1", 27ULL},
-            {"703*2^k-1", 703ULL},
-            {"9663*2^k-1", 9663ULL},
-            {"77671*2^k-1", 77671ULL},
-            {"319804831*2^k-1", 319804831ULL},
+            int64_t offset;
+            uint32_t min_k;
+        } families[12] = {
+            {"2^k-1", 1ULL, -1, 1U},
+            {"3*2^k-1", 3ULL, -1, 1U},
+            {"27*2^k-1", 27ULL, -1, 1U},
+            {"5*2^k-1", 5ULL, -1, 1U},
+            {"7*2^k-1", 7ULL, -1, 1U},
+            {"9*2^k-1", 9ULL, -1, 1U},
+            {"2^k+1", 1ULL, 1, 1U},
+            {"2^k-3", 1ULL, -3, 2U},
+            {"703*2^k-1", 703ULL, -1, 1U},
+            {"9663*2^k-1", 9663ULL, -1, 1U},
+            {"77671*2^k-1", 77671ULL, -1, 1U},
+            {"319804831*2^k-1", 319804831ULL, -1, 1U},
         };
         const size_t num_families = sizeof(families) / sizeof(families[0]);
-        size_t total_m2 = (size_t)mersenne_max * num_families;
-        m2_recs = calloc(total_m2, sizeof(mersenne_record_t));
-        if (!m2_recs) {
+        size_t total_m2_cap = (size_t)mersenne_max * num_families;
+        mode2_job_t *jobs = calloc(total_m2_cap, sizeof(mode2_job_t));
+        m2_recs = calloc(total_m2_cap, sizeof(mersenne_record_t));
+        uint8_t *ok_flags = calloc(total_m2_cap, sizeof(uint8_t));
+        if (!jobs || !m2_recs || !ok_flags) {
             fprintf(stderr, "ERROR: Failed to allocate mode2 results\n");
+            free(jobs);
+            free(m2_recs);
+            free(ok_flags);
             return 1;
         }
+        size_t total_jobs = 0U;
         for (size_t f = 0; f < num_families; f++) {
-            for (uint32_t k = 1U; k <= mersenne_max; k++) {
-                if (!test_mersenne_seed(families[f].name, families[f].mult, k, max_steps,
-                                        &m2_recs[m2_count], &u128_fallbacks,
-                                        &silent_overflows, &diag)) {
-                    fprintf(stderr, "ALERT: Mode 2 failed on %s at k=%u\n", families[f].name, k);
-                    print_failure_diagnostic_stderr(&diag);
-                    m2_count++;
-                    exit_code = 11;
-                    break;
-                }
-                m2_count++;
-            }
-            if (exit_code != 0) {
-                break;
+            for (uint32_t k = families[f].min_k; k <= mersenne_max; k++) {
+                jobs[total_jobs++] = (mode2_job_t){
+                    families[f].name, families[f].mult, families[f].offset, k};
             }
         }
+
+        uint32_t m2_threads = (threads > 0U) ? threads : default_threads(SEQ_CUTOFF);
+        if (m2_threads < 1U) {
+            m2_threads = 1U;
+        }
+        if (m2_threads > 64U) {
+            m2_threads = 64U;
+        }
+        if (total_jobs < (size_t)m2_threads) {
+            m2_threads = (total_jobs > 0U) ? (uint32_t)total_jobs : 1U;
+        }
+
+        mode2_worker_ctx_t *wctxs = calloc(m2_threads, sizeof(mode2_worker_ctx_t));
+        pthread_t *tids = calloc(m2_threads, sizeof(pthread_t));
+        if (!wctxs || !tids) {
+            fprintf(stderr, "ERROR: Failed to allocate mode2 threads\n");
+            free(wctxs);
+            free(tids);
+            free(jobs);
+            free(m2_recs);
+            free(ok_flags);
+            return 1;
+        }
+        for (uint32_t t = 0U; t < m2_threads; t++) {
+            wctxs[t].jobs = jobs;
+            wctxs[t].total_jobs = total_jobs;
+            wctxs[t].tid = t;
+            wctxs[t].num_threads = m2_threads;
+            wctxs[t].max_steps = max_steps;
+            wctxs[t].recs = m2_recs;
+            wctxs[t].ok_flags = ok_flags;
+        }
+        if (m2_threads == 1U) {
+            mode2_worker_run(&wctxs[0]);
+        } else {
+            uint32_t spawned = 0U;
+            bool thread_err = false;
+            for (uint32_t t = 0U; t < m2_threads; t++) {
+                int rc = pthread_create(&tids[t], NULL, mode2_worker_run, &wctxs[t]);
+                if (rc != 0) {
+                    fprintf(stderr, "ERROR: mode2 pthread_create(%u) failed: %s\n", t,
+                            strerror(rc));
+                    thread_err = true;
+                    break;
+                }
+                spawned++;
+            }
+            for (uint32_t t = 0U; t < spawned; t++) {
+                int rc = pthread_join(tids[t], NULL);
+                if (rc != 0) {
+                    fprintf(stderr, "ERROR: mode2 pthread_join(%u) failed: %s\n", t,
+                            strerror(rc));
+                    thread_err = true;
+                }
+            }
+            if (thread_err) {
+                free(wctxs);
+                free(tids);
+                free(jobs);
+                free(m2_recs);
+                free(ok_flags);
+                return 1;
+            }
+        }
+
+        size_t best_fail_idx = total_jobs;
+        failure_diagnostic_t fail_diag;
+        memset(&fail_diag, 0, sizeof(fail_diag));
+        for (uint32_t t = 0U; t < m2_threads; t++) {
+            silent_overflows += wctxs[t].silent_overflows;
+            if (wctxs[t].failed && wctxs[t].first_fail_idx < best_fail_idx) {
+                best_fail_idx = wctxs[t].first_fail_idx;
+                fail_diag = wctxs[t].first_diag;
+            }
+        }
+        if (best_fail_idx < total_jobs) {
+            fprintf(stderr, "ALERT: Mode 2 failed on %s at k=%u\n", jobs[best_fail_idx].family,
+                    jobs[best_fail_idx].k);
+            diag = fail_diag;
+            print_failure_diagnostic_stderr(&diag);
+            m2_count = best_fail_idx + 1U;
+            exit_code = 11;
+        } else {
+            m2_count = total_jobs;
+        }
+        for (size_t i = 0U; i < m2_count; i++) {
+            if (m2_recs[i].used_bigint_fallback) {
+                u128_fallbacks++;
+            }
+        }
+
+        free(wctxs);
+        free(tids);
+        free(jobs);
+        free(ok_flags);
         clock_gettime(CLOCK_MONOTONIC, &t1);
         m2_elapsed = (double)(t1.tv_sec - t0.tv_sec) +
                      (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;

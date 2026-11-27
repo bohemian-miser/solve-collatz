@@ -141,12 +141,12 @@ def verify_mode1_records_python(m1: dict[str, Any]) -> int:
 
 
 def _seed_from_family(family: str, k: int) -> int:
-    if family == "2^k-1":
-        return (1 << k) - 1
-    m = re.fullmatch(r"(\d+)\*2\^k-1", family)
+    m = re.fullmatch(r"(?:(\d+)\*)?2\^k([+-]\d+)", family)
     if not m:
         raise ValueError(f"Unsupported Mode 2 family string: {family}")
-    return (int(m.group(1)) << k) - 1
+    mult = int(m.group(1)) if m.group(1) else 1
+    offset = int(m.group(2))
+    return (mult << k) + offset
 
 
 def verify_mode2_samples_python(m2: dict[str, Any]) -> int:
@@ -256,16 +256,16 @@ def run_self_test(range_end: int, sieve_bits: int, asan: bool = False) -> dict[s
         if (rec["stopping_time"], rec["total_steps"], rec["peak"]) != (exp_stop, exp_tot, exp_peak):
             raise AssertionError(f"Peak record mismatch at n={n}: got {rec}")
 
-    # Mode 2 Mersenne & Terras/Roosendaal high-glide checks (7 families * 700 = 4,900 seeds)
+    # Mode 2 Mersenne, extended, & Terras/Roosendaal high-glide checks (11*700 + 699 = 8,399 seeds)
     m2 = canon["mode2_mersenne"]
-    if not m2["all_converged"] or m2["tested_count"] != 4900:
+    if not m2["all_converged"] or m2["tested_count"] != 8399:
         raise AssertionError(f"Mode 2 check failed: {m2}")
     if canon["u128_bigint_fallbacks"] == 0:
         raise AssertionError("Expected u128->bigint fallback to exercise at k <= 700")
 
-    # Sieve equivalence proof on 1..1,200,000 (> 2^20 so mod-2^20 sieve activates): 0 vs 16 vs 18 vs 20
+    # Sieve equivalence proof on 1..1,200,000 (> 2^20): 0 vs 16 vs 18 vs 20 vs 22 vs 24
     equiv_ref = None
-    for sb in (0, 16, 18, 20):
+    for sb in (0, 16, 18, 20, 22, 24):
         sub = run_engine(
             range_end=1_200_000,
             mersenne_max=None,
@@ -309,6 +309,22 @@ def run_self_test(range_end: int, sieve_bits: int, asan: bool = False) -> dict[s
     if diag_json.get("kind") != "step_budget_exceeded" or diag_json.get("seed") != "27":
         raise AssertionError(f"Unexpected failure_diagnostic payload: {diag_json}")
 
+    # Regression check on committed REF-012 10^10 + k<=2000 JSON artifact
+    ref012_log = REPO_ROOT / "search" / "logs" / "glide_sweep_1e10_ref012.json"
+    if ref012_log.exists():
+        log_data = loads_strict_json(ref012_log.read_text(encoding="utf-8"))
+        log_canon = log_data["canonical"]
+        if canonical_sha256(log_canon) != log_data.get("deterministic_sha256"):
+            raise AssertionError("REF-012 JSON artifact deterministic_sha256 mismatch")
+        if (
+            log_canon.get("overflow_count") != 0
+            or log_canon.get("mode1_range", {}).get("verified_count") != 10_000_000_000
+            or not log_canon.get("mode1_range", {}).get("all_converged")
+            or log_canon.get("mode2_mersenne", {}).get("tested_count") != 23999
+            or not log_canon.get("mode2_mersenne", {}).get("all_converged")
+        ):
+            raise AssertionError("REF-012 JSON artifact failed integrity assertions")
+
     return data
 
 
@@ -327,9 +343,9 @@ def main() -> int:
     parser.add_argument(
         "--sieve-bits",
         type=int,
-        choices=(0, 16, 18, 20),
-        default=20,
-        help="Affine pre-drop sieve modulus bits (0=off, 16, 18, or 20; default 20)",
+        choices=(0, 16, 18, 20, 22, 24),
+        default=24,
+        help="Affine pre-drop sieve modulus bits (0=off, 16, 18, 20, 22, or 24; default 24)",
     )
     parser.add_argument("--max-steps", type=int, default=None, help="Explicit step budget per seed")
     parser.add_argument("--threads", type=int, default=None, help="Worker thread count (1..64)")

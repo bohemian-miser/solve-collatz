@@ -88,6 +88,9 @@ def check_stopping_bound(expr: str, limit: int) -> int:
         226_588_897,
         319_804_831,
         670_617_279,
+        1_410_123_943,
+        1_827_397_567,
+        2_788_008_987,
     ]
     seeds = list(range(2, limit + 1)) + record_stress_seeds + [(1 << k) - 1 for k in range(5, 45)]
     for n in seeds:
