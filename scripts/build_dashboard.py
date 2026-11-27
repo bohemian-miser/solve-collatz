@@ -70,7 +70,7 @@ def parse_refuted(path: pathlib.Path) -> list[dict[str, str]]:
         if not lines:
             continue
         hdr = lines[0]
-        m = re.match(r"([A-Z]+-\d+)\s*[—–-]\s*(.+)", hdr)
+        m = re.match(r"`?([A-Z]+-\d+)`?\s*[—–:-]\s*(.+)", hdr)
         if not m:
             continue
         rid, title = m.group(1).strip(), m.group(2).strip()
@@ -78,8 +78,9 @@ def parse_refuted(path: pathlib.Path) -> list[dict[str, str]]:
         witness_parts: list[str] = []
         for l in lines[1:]:
             if l.startswith("- **Status:**"):
-                status = l.split(":**", 1)[1].strip().strip("`")
-            elif l.startswith("- **Counterexample") or l.startswith("- **Witness") or l.startswith("- **Barrier") or l.startswith("- **Result"):
+                raw_st = l.split(":**", 1)[1].strip()
+                status = raw_st.split()[0].strip("`")
+            elif l.startswith("- **Counterexample") or l.startswith("- **Witness") or l.startswith("- **Barrier") or l.startswith("- **Takeaway"):
                 witness_parts.append(l.split(":**", 1)[1].strip())
         entries.append({
             "id": rid,
