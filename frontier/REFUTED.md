@@ -154,3 +154,26 @@ Every entry must include:
   | Max Total Steps (`n ≤ 249,999,999` [`tau_exact_up_to`]) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
 - **Structured High-Glide Stress Families (`1 ≤ k ≤ 1500`, `10,500` seeds across 7 families):** All `2^k·{1,3,27,703,9663,77671,319804831} - 1` converge to `1` (`max σ = 9,901` at `9663·2^{1492}-1`, `max τ = 20,696` at `319804831·2^{1500}-1`, `max log2_glide_ratio = 880.162551` at `77671·2^{1500}-1` [`2,408`-bit peak], global `max_peak_bits = 2,408`).
 - **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification to `5·10⁹` (`1.228B seeds/s` on 8 cores via mod-$2^{20}$ sieve + `128 KiB` L2 bitset) and structured `k ≤ 1500` (`2,408`-bit peaks, `0` overflows), with `scripts/native_cache.py` unified across both Track B C11 wrappers.
+
+### `REF-011` — Track B Phase 4 `512`-bit multi-limb & canonical `6`-circuit elimination (`m = 2` `K ≤ 240`, `m = 3` `K ≤ 120`, `m = 4` `K ≤ 70`, `m = 5` `K ≤ 44`, `m = 6` `K ≤ 32`)
+- **Claim:** There exists a non-trivial positive integer cycle `n > 1` (`n_j ≥ 3` at every block entry) satisfying `(2^S - 3^K) n_0 = C(v)` across any canonical `m`-circuit in the exact Simons–de Weger positive band `S_min(K) ≤ S < K log₂(3) + m log₂(4/3)` (`2^S · 3^m < 4^m · 3^K`) for:
+  1. Canonical `2`-circuits with `2 ≤ K ≤ 240` (`1,115,241` candidates; `S ≤ 381`, breaking the `u256_t` `K = 160` barrier via `u512_t`),
+  2. Canonical `3`-circuits with `3 ≤ K ≤ 120` (`165,925,492` candidates; `S ≤ 192`),
+  3. Canonical `4`-circuits with `4 ≤ K ≤ 70` (`2,392,613,795` candidates),
+  4. Canonical `5`-circuits with `5 ≤ K ≤ 44` (`3,846,813,721` candidates; exact `243 · 2^S < 1024 · 3^K` band),
+  5. Canonical `6`-circuits with `6 ≤ K ≤ 32` (`2,819,460,829` candidates; exact `729 · 2^S < 4096 · 3^K` band).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` non-trivial positive cycles across `9,225,929,078` canonical `m`-circuits, `overflow_guard_skips = 0`; `deterministic_sha256 = 274ce899f21659cc7674f8071f2a9dec42d6bb1d89c389d2d1f1c548918de4ae`; full log at `search/logs/mcircuit_sweep_ref011.json`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 116-119 python3 search/mcircuit_hunter/run_mcircuit_hunter.py --k2-max 240 --k3-max 120 --k4-max 70 --k5-max 44 --k6-max 32 --bound simons --threads 4 --json-out search/logs/mcircuit_sweep_ref011.json
+  ```
+- **Arithmetic & Cross-Verification Audit:**
+  - C11 engine (`-O3 -Wall -Wextra -Werror -std=c11 -pthread`, `elapsed_seconds = 48.673685` on 4 pinned cores) with 3-tier dispatch: `u128` (`K ≤ 80, S ≤ 127`), `u256_t` (`K ≤ 160, S ≤ 255`), and `u512_t` (`K ≤ 256, S ≤ 511`), plus exact `u1024_t` precomputation and hit recovery.
+  - Bit-for-bit `deterministic_sha256` equivalence verified across `u128 == u256 == u512` on `m = 2..6` (`m = 2 K ≤ 50, m = 3 K ≤ 20, m = 4 K ≤ 14, m = 5 K ≤ 12, m = 6 K ≤ 12`, `sha256 = 3887fbf7d3fda874`), exact Simons-band cross-verification against independent pure-Python exact-bigint enumeration for all `m = 2..6` (`m=2 K≤20: 583`, `m=3 K≤15: 4,227`, `m=4 K≤10: 930`, `m=5 K≤12: 9,875`, `m=6 K≤13: 34,550`), exact `cycle_hunter.py` Eliahou agreement (`m=2 K≤18: 1,271`, `m=3 K≤12: 1,404`), and bit-for-bit identical `deterministic_sha256` across `threads = 1`, `threads = 4`, and `ASan+UBSan` (`1,217,351`-candidate subset including `m = 2 K ≤ 240` and `m = 6 K ≤ 13`, `sha256 = 5d243be254041105`, `0` sanitizer errors).
+- **Closest 2-Adic Rational Near-Misses:**
+  - `2`-circuit (`K = 216, S = 343`): `k_vec = [13, 203]`, `l_vec = [32, 97]`, `dist_approx = 3.093742840986e-07`
+  - `3`-circuit (`K = 116, S = 185`): `k_vec = [14, 75, 27]`, `l_vec = [37, 21, 14]`, `dist_approx = 3.06034097069e-09`
+  - `4`-circuit (`K = 64, S = 102`): `k_vec = [4, 31, 25, 4]`, `l_vec = [4, 6, 18, 14]`, `dist_approx = 1.312691683853e-11`
+  - `5`-circuit (`K = 44, S = 71`): `k_vec = [2, 7, 16, 16, 3]`, `l_vec = [10, 2, 4, 9, 7]`, `dist_approx = 5.190573340752e-12`
+  - `6`-circuit (`K = 32, S = 52`): `k_vec = [2, 2, 8, 12, 3, 5]`, `l_vec = [4, 6, 5, 4, 3, 4]`, `dist_approx = 6.022192645138e-11`
+- **Takeaway:** Breaks the `K = 160 / S = 255` `u256_t` ceiling via `u512_t` (`K ≤ 256, S ≤ 511`) + `u1024_t` exact verification, pushes `2`-circuits to `K ≤ 240`, `3`-circuits to `K ≤ 120`, `4`-circuits to `K ≤ 70`, `5`-circuits to `K ≤ 44`, and introduces exhaustive canonical `6`-circuit elimination up to `K ≤ 32` (`9.226B` total candidates, `5.21×` `REF-009` volume, `0` skips, `0` hits), with `SolveCollatz.Disprove.NontrivialCycleCert` schema verified across `m = 1..6`. Further reach (`m ≥ 7` or higher `K`) requires LLL/lattice reduction or GPU acceleration.
