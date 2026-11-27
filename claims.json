@@ -5,7 +5,12 @@
       "user": "bohemian-miser",
       "claimed_at": "2026-11-27T13:09:44Z",
       "expires_at": "2026-11-28T13:09:44Z"
+    },
+    "PROVE-A1": {
+      "user": "bohemian-miser",
+      "claimed_at": "2026-11-27T13:13:18Z",
+      "expires_at": "2026-11-28T13:13:18Z"
     }
   },
-  "updated_at": "2026-11-27T13:09:44Z"
+  "updated_at": "2026-11-27T13:13:18Z"
 }
