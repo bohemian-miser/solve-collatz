@@ -5,7 +5,12 @@
       "user": "bohemian-miser",
       "claimed_at": "2026-11-27T16:21:43Z",
       "expires_at": "2026-11-28T16:21:43Z"
+    },
+    "KNOWN-004": {
+      "user": "bohemian-miser",
+      "claimed_at": "2026-11-27T16:25:06Z",
+      "expires_at": "2026-11-28T16:25:06Z"
     }
   },
-  "updated_at": "2026-11-27T16:21:43Z"
+  "updated_at": "2026-11-27T16:25:06Z"
 }
