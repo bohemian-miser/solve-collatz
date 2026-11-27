@@ -62,9 +62,9 @@ id = "KNOWN-002"
 track = "Known"
 status = "IN_PROGRESS"
 title = "Steiner (1977) circuit theorem: no non-trivial 1-cycle (up-then-down cycle)"
-lean_file = "Collatz/Known/SteinerCircuit.lean"
+lean_file = "Collatz/Known/SteinerCircuit.lean, Collatz/Known/SteinerConvergents.lean"
 needs = ["CORE-003"]
-barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1, 5n+1, Z_<0, Z_2). Proved: exact 1-circuit numerator & cycle equations, cycle_hunter divisibility equivalence, gap bound & S = min_s(k) uniqueness, kernel elimination for 1 <= k <= 20, and conditional Steiner reduction. Open: Baker/Rhin lower bound 2^S <= 2^k * (2^S - 3^k) for k > 20."
+barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1, 5n+1, Z_<0, Z_2). Phase 1 (SteinerCircuit.lean): exact 1-circuit numerator & cycle equations, cycle_hunter divisibility equivalence, gap bound & S = min_s(k) uniqueness, kernel elimination for 1 <= k <= 20, and conditional Steiner reduction. Phase 2 (SteinerConvergents.lean): pure-Nat Steiner-Legendre convergent exclusion theorem using log_2(3) CF convergents (p_13, q_13) = (301994, 190537) and (p_14, q_14) = (16785921, 10590737), eliminating ALL non-trivial 1-circuits for 1 <= k <= 10781273 (539,063x leap over k <= 20), proving unconditional 10781274 <= k, 17087915 <= S, 27869189 <= k + S bridged to Challenge.lean, sharpened conditional reduction for k > 10781273, and Barrier 1-5 separations. Open: Baker/Rhin lower bound 2^S <= 2^k * (2^S - 3^k) for k > 10781273."
 
 [[node]]
 id = "KNOWN-003"

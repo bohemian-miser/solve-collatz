@@ -13,6 +13,7 @@ public import Collatz.Disprove.Cert
 public import Collatz.Known.TerrasParity
 public import Collatz.Known.TerrasDensity
 public import Collatz.Known.SteinerCircuit
+public import Collatz.Known.SteinerConvergents
 public import Collatz.Prove.Automata.ModularDescent
 public import Collatz.Prove.Automata.SieveObstruction
 public import Collatz.Known.CycleLengthBounds
