@@ -78,11 +78,11 @@ barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fai
 [[node]]
 id = "KNOWN-004"
 track = "Known"
-status = "OPEN_SUBGOAL"
-title = "Bridge to Terence Tao (2022) almost-all almost-bounded orbits (e.g. via gotrevor/tao-collatz)"
-target_file = "Collatz/Known/TaoBridge.lean"
+status = "IN_PROGRESS"
+title = "Bridge to Terence Tao (2022) almost-all almost-bounded orbits (logarithmic density & Tauberian interface)"
+lean_file = "Collatz/Known/TaoBridge.lean"
 needs = ["CORE-003", "KNOWN-001"]
-barrier_notes = "Imports/connects Syracuse random-walk Fourier decay to Challenge.lean."
+barrier_notes = "Proved (pure Lean 4 core, zero Mathlib): OrbitMinLe/EventuallyBelow/CollatzReachesOne compatibility with Challenge.lean, Syracuse.lean, and TerrasDensity.lean; exact N!-scaled logarithmic density HasLogDensityOne; pure-Nat Abel summation & Tauberian theorem (hasLogDensityOne_of_hasNaturalDensityOne) yielding unconditional terras_log_density_one; exact Syracuse offset upper bound and drift contraction interface (TaoSyracuseDriftHypothesis -> TaoAlmostBoundedConjecture -> HasLogDensityOne HasFiniteStoppingTime / bitLen); and Barrier 4 / PROVE-A1 zero-density separation (notMersenne_hasLogDensityOne, hasLogDensityOne_not_implies_forall, terras_log_density_one_allows_cycle). Open: Tao's (2022) full Fourier-renewal / 2-adic random-walk proof of TaoSyracuseDriftHypothesis / TaoAlmostBoundedConjecture."
 
 [[node]]
 id = "PROVE-A1"
