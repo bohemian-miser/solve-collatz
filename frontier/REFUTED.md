@@ -134,3 +134,23 @@ Every entry must include:
   - `4`-circuit (`K = 52, S = 83`): `k_vec = [10, 14, 13, 15]`, `l_vec = [16, 6, 3, 10]`, `dist_approx = 1.973063951232e-09`
   - `5`-circuit (`K = 38, S = 62`): `k_vec = [2, 24, 2, 6, 4]`, `l_vec = [2, 10, 4, 8, 5]`, `dist_approx = 6.098330324666e-10`
 - **Takeaway:** Breaks the `K = 80 / S = 127` `u128` ceiling via `u256_t` (`K ≤ 160 / S ≤ 255`), doubles `2`-circuit elimination to `K ≤ 160`, pushes `3`-circuits to `K ≤ 100`, pushes `4`-circuits to `K ≤ 60`, and exhaustively refutes canonical `5`-circuits up to `K ≤ 38` (`1.769B` total candidates, `0` skips, `0` hits); any hit automatically emits a kernel-ready `SolveCollatz.Disprove.NontrivialCycleCert`. Further reach (`m ≥ 6` or `K > 160`) requires LLL/lattice reduction or `u512` modular arithmetic.
+
+### `REF-010` — Five-billion-scale Track B Phase 4 divergence, cycle, or infinite stopping-time anomaly in `1 ≤ n ≤ 5·10⁹`, Mersenne lifts `2^k·{1,3,27} - 1`, and Terras/Roosendaal high-glide lifts `2^k·{703,9663,77671,319804831} - 1` (`k ≤ 1500`)
+- **Claim:** There exists a positive integer `1 ≤ n ≤ 5·10⁹` or a structured seed in the `7` high-glide families `2^k·{1,3,27} - 1` (Mersenne lifts) and `2^k·{703,9663,77671,319804831} - 1` (Terras/Roosendaal record-glide lifts) for `1 ≤ k ≤ 1500` that fails to drop strictly below `n` (or diverges / enters a non-trivial cycle).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` counterexamples across `5·10⁹` integers + `10,500` structured seeds up to `k = 1500`, `0` silent `__uint128_t` overflows; `overflow_count = 0`; `u128_bigint_fallbacks = 9,989`; `deterministic_sha256 = fd113c47838fdd6865deccf30f09871d8879d133299d09331d6611f7aaadb51e`; full log at `search/logs/glide_sweep_5e9_ref010.json`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 112-119 python3 search/glide_hunter/run_glide_hunter.py --range-end 5000000000 --mersenne-max 1500 --sieve-bits 20 --threads 8 --log-json search/logs/glide_sweep_5e9_ref010.json
+  ```
+- **Sieve & Arithmetic Audit:**
+  - Upgraded mod-$2^{20}$ (`1,048,576`) affine drop table with `u128` intermediate sieve construction covers `1,021,248 / 1,048,576` residues (`97.3938%`, `4,868,668,705` fast-skips in `1..5·10⁹`, max threshold `n_min = 24`) paired with a `128 KiB` L2-resident fast-skip bitset for `n ≥ 2.5·10⁸` (`4.071289s` Mode 1 / `1,228,112,368 seeds/s`, `2.428059s` Mode 2, `7.532s` total wall time on 8 pinned cores).
+  - Cross-verified `--sieve-bits 0` (brute force) ≡ `--sieve-bits 18` ≡ `--sieve-bits 20` exact records on `1..500,000`, `1..1,000,000`, and `1..1,200,000` (crossing `2^20`), `threads=1` ≡ `threads=8` ≡ ASan+UBSan `deterministic_sha256` on `1..200,000 + k ≤ 800` (`698d0adf748fb9a6`) and `1..1,200,000 + k ≤ 800` (`489a07ffa9e8859d`) with `0` sanitizer errors, strict RFC-8259 JSON via `scripts/native_cache.py`, and pure-Python `int` verification of every reported record seed.
+- **Verified Record Summary (`1 ≤ n ≤ 5·10⁹`):**
+  | Record Type | Peak Seed `n` | Stopping Time `σ(n)` | Total Steps `τ(n)` | Peak Value | Peak Ratio `peak/n` |
+  |---|---:|---:|---:|---:|---:|
+  | Max Stopping Time (`1 ≤ n ≤ 5·10⁹`) | `2,788,008,987` | `729` | `944` | `81,887,769,175,732` | `29,371.42×` |
+  | Intermediate Stopping-Time Record | `1,827,397,567` | `706` | `928` | `118,736,698,851,769,012` | `64,975,843.79×` |
+  | Max Peak Ratio (`1 ≤ n ≤ 5·10⁹`) | `1,410,123,943` | `590` | `770` | `7,125,885,122,794,452,160` | `5,053,375,030.02×` |
+  | Max Total Steps (`n ≤ 249,999,999` [`tau_exact_up_to`]) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
+- **Structured High-Glide Stress Families (`1 ≤ k ≤ 1500`, `10,500` seeds across 7 families):** All `2^k·{1,3,27,703,9663,77671,319804831} - 1` converge to `1` (`max σ = 9,901` at `9663·2^{1492}-1`, `max τ = 20,696` at `319804831·2^{1500}-1`, `max log2_glide_ratio = 880.162551` at `77671·2^{1500}-1` [`2,408`-bit peak], global `max_peak_bits = 2,408`).
+- **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification to `5·10⁹` (`1.228B seeds/s` on 8 cores via mod-$2^{20}$ sieve + `128 KiB` L2 bitset) and structured `k ≤ 1500` (`2,408`-bit peaks, `0` overflows), with `scripts/native_cache.py` unified across both Track B C11 wrappers.

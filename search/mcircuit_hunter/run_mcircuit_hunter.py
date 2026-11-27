@@ -2,7 +2,7 @@
 """Pure-stdlib Python wrapper for `mcircuit_hunter.c` (Track B `DISPROVE-002 Phase 3`).
 
 Auto-compiles `search/mcircuit_hunter/mcircuit_hunter.c` into content-hashed
-`/tmp/solve_collatz_mcircuit_hunter_<sha12>[_asan]` (never colliding across worktrees),
+`/tmp/solve_collatz_mcircuit_hunter_<sha12>[_asan]` via `scripts/native_cache.py`,
 keeping the git working tree 100% free of binaries. Validates exact agreement against
 `search/cycle_hunter.py`, cross-verifies `u256` vs `u128` on `m=2..4`, cross-verifies
 `m=5` Simons-de Weger circuits against an independent Python reference, verifies
@@ -13,9 +13,6 @@ strict RFC-8259 JSON serialization.
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
-import os
 import pathlib
 import subprocess
 import sys
@@ -26,31 +23,28 @@ from typing import Any
 REPO_SEARCH_DIR = pathlib.Path(__file__).resolve().parent
 SEARCH_DIR = REPO_SEARCH_DIR.parent
 REPO_ROOT = SEARCH_DIR.parent
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from native_cache import (  # type: ignore  # noqa: E402
+    atomic_compile,
+    cached_binary_path,
+    canonical_sha256,
+    dump_strict_json,
+    loads_strict_json,
+)
+
 C_SOURCE = REPO_SEARCH_DIR / "mcircuit_hunter.c"
 CERT_LEAN = REPO_ROOT / "Collatz" / "Disprove" / "Cert.lean"
 
 
-def _cached_bin_path(asan: bool) -> pathlib.Path:
-    """Return a content-hashed `/tmp/` binary path so worktrees/branches never collide."""
-    h = hashlib.sha256()
-    for path in sorted(REPO_SEARCH_DIR.glob("*.[ch]")):
-        h.update(path.name.encode("utf-8"))
-        h.update(b"\0")
-        h.update(path.read_bytes())
-    digest = h.hexdigest()[:12]
-    suffix = "_asan" if asan else ""
-    return pathlib.Path(f"/tmp/solve_collatz_mcircuit_hunter_{digest}{suffix}")
-
-
 def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
-    """Compile `mcircuit_hunter.c` into `/tmp/` keyed by source SHA-256."""
+    """Compile `mcircuit_hunter.c` into `/tmp/` via `scripts/native_cache.py`."""
     if not C_SOURCE.exists():
         raise FileNotFoundError(f"Missing C source: {C_SOURCE}")
-    target = _cached_bin_path(asan=asan)
-    if not force and target.exists():
-        return target
-
-    tmp_bin = pathlib.Path(f"{target}.{os.getpid()}")
+    suffix = "_asan" if asan else ""
+    target = cached_binary_path("solve_collatz_mcircuit_hunter", [REPO_SEARCH_DIR], suffix=suffix)
     cmd = [
         "gcc",
         "-O2" if asan else "-O3",
@@ -62,34 +56,8 @@ def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
     ]
     if asan:
         cmd.extend(["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
-    cmd.extend([str(C_SOURCE), "-lm", "-o", str(tmp_bin)])
-
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode != 0:
-        if tmp_bin.exists():
-            tmp_bin.unlink()
-        raise RuntimeError(f"gcc failed ({res.returncode}):\n{res.stderr}")
-    os.replace(tmp_bin, target)
-    return target
-
-
-def _reject_non_rfc8259(val: str) -> None:
-    raise ValueError(f"Non-RFC-8259 JSON constant: {val}")
-
-
-def parse_strict_json(raw: str) -> dict[str, Any]:
-    """Parse JSON strictly rejecting NaN, Infinity, and -Infinity."""
-    data = json.loads(raw, parse_constant=_reject_non_rfc8259)
-    json.dumps(data, allow_nan=False)
-    return data
-
-
-def canonical_sha256(canonical_obj: dict[str, Any]) -> str:
-    """Compute reproducible SHA-256 digest over the timing-free canonical payload."""
-    encoded = json.dumps(
-        canonical_obj, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    cmd.extend([str(C_SOURCE), "-lm", "-o", "{out}"])
+    return atomic_compile(cmd, target, force=force)
 
 
 def emit_lean_cert(start: int, period: int) -> str:
@@ -151,7 +119,7 @@ def run_engine(
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode not in (0, 10):
         raise RuntimeError(f"mcircuit_hunter exited with {res.returncode}:\n{res.stderr}")
-    data = parse_strict_json(res.stdout)
+    data = loads_strict_json(res.stdout)
     data["deterministic_sha256"] = canonical_sha256(data["canonical"])
     hits = data["canonical"].get("hits", [])
     if hits:
@@ -277,8 +245,8 @@ def run_self_test(asan: bool = False, threads: int = 4) -> dict[str, Any]:
 
     for bad_json in ('{"x": NaN}', '{"x": Infinity}', '{"x": -Infinity}'):
         try:
-            parse_strict_json(bad_json)
-            raise AssertionError(f"parse_strict_json failed to reject {bad_json}")
+            loads_strict_json(bad_json)
+            raise AssertionError(f"loads_strict_json failed to reject {bad_json}")
         except ValueError:
             pass
     try:
@@ -420,10 +388,7 @@ def main() -> int:
 
     elapsed = time.monotonic() - t0
     if args.json_out:
-        args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(
-            json.dumps(data, indent=2, allow_nan=False) + "\n", encoding="utf-8"
-        )
+        dump_strict_json(data, args.json_out)
 
     canon = data["canonical"]
     status = "HIT!" if canon["total_hits"] > 0 else ("PASS" if args.self_test else "CLEAN")

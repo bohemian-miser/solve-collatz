@@ -1,14 +1,15 @@
 /*
  * glide_hunter.c — High-throughput Collatz (3n + 1) stopping-time & extreme-glide hunter.
  *
- * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-003` Phase 3).
+ * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-003` Phase 4).
  *
  * Features:
  *   - Strict `__uint128_t` overflow detection (zero silent wraparound; `overflow_count` audited).
- *   - Configurable mod-2^B affine stopping-time drop sieve (`--sieve-bits 0|16|18`, default 18):
+ *   - Configurable mod-2^B affine stopping-time drop sieve (`--sieve-bits 0|16|18|20`, default 20):
  *     - mod 2^16: 63,422 / 65,536 (96.7743%) residues drop < n in <= 26 steps (n_min <= 24).
- *     - mod 2^18: 254,649 / 262,144 (97.1409%) residues drop < n in <= 29 steps (n_min <= 24),
- *       paired with a 32 KiB L1-resident fast-skip bitset for n >= TAU_CACHE_CAP.
+ *     - mod 2^18: 254,649 / 262,144 (97.1409%) residues drop < n in <= 29 steps (n_min <= 24).
+ *     - mod 2^20: 1,021,248 / 1,048,576 (97.3938%) residues drop < n, paired with a 128 KiB
+ *       L2-resident fast-skip bitset for n >= TAU_CACHE_CAP.
  *   - Syracuse odd-step shortcut (`ctz128`) with exact first-drop stopping-time recovery.
  *   - Block-parallel deterministic execution (`R <= L + L/32` + explicit `m < block_L` guard).
  *   - Mode 1 (`--range-end N`): verifies finite stopping time for all 1 <= n <= N and tracks
@@ -37,15 +38,16 @@
 
 __extension__ typedef unsigned __int128 u128;
 
-#define MAX_SIEVE_BITS 18U
+#define MAX_SIEVE_BITS 20U
 #define MAX_SIEVE_SIZE (1U << MAX_SIEVE_BITS)
-#define DEFAULT_SIEVE_BITS 18U
+#define DEFAULT_SIEVE_BITS 20U
 #define TAU_CACHE_CAP 250000000ULL
 #define SEQ_CUTOFF (1ULL << 20)
 #define MAX_RECORD_CAP 2048U
 #define BIGINT_MAX_LIMBS 256U
 #define DEFAULT_MAX_STEPS 2000000U
 #define MAX_ALLOWED_STEPS 100000000U
+#define MAX_MERSENNE_K 4000ULL
 
 static const u128 U128_SAFE_3N1 = (~(u128)0 - 1U) / 3U;
 
@@ -108,7 +110,7 @@ typedef struct {
     char last_dec[256];
 } failure_diagnostic_t;
 
-/* 4 MiB affine table + 32 KiB L1-resident drop bitset. */
+/* 16 MiB affine table + 128 KiB L2-resident drop bitset. */
 static sieve_entry_t g_sieve[MAX_SIEVE_SIZE];
 static uint64_t g_sieve_fast[MAX_SIEVE_SIZE / 64U];
 static uint32_t g_sieve_bits = DEFAULT_SIEVE_BITS;
@@ -194,9 +196,9 @@ static uint32_t init_sieve(uint32_t sieve_bits) {
 
     uint32_t covered = 0U;
     for (uint32_t r = 0U; r < g_sieve_size; r++) {
-        uint64_t pow3 = 1ULL;
-        uint64_t add_c = 0ULL;
-        uint32_t val = r;
+        u128 pow3 = 1U;
+        u128 add_c = 0U;
+        u128 val = r;
         uint8_t s = 0U;
         uint8_t k = 0U;
         double max_ratio = 1.0;
@@ -204,25 +206,26 @@ static uint32_t init_sieve(uint32_t sieve_bits) {
         uint16_t min_n = 0U;
 
         while (s < sieve_bits) {
-            if ((val & 1U) == 0U) {
+            if (((uint64_t)val & 1ULL) == 0ULL) {
                 val >>= 1;
                 s++;
             } else {
                 k++;
-                pow3 *= 3ULL;
-                add_c = 3ULL * add_c + (1ULL << s);
+                pow3 *= 3U;
+                add_c = 3U * add_c + ((u128)1U << s);
                 double upper = ((double)pow3 + (double)add_c / (double)g_sieve_size) /
-                               (double)(1ULL << s);
+                               (double)((u128)1U << s);
                 if (upper > max_ratio) {
                     max_ratio = upper;
                 }
                 val = (3U * val + 1U) >> 1;
                 s++;
             }
-            if (pow3 < (1ULL << s)) {
-                uint64_t denom = (1ULL << s) - pow3;
-                uint64_t mn = add_c / denom;
-                if (mn <= 65535ULL && pow3 <= UINT32_MAX && add_c <= UINT32_MAX) {
+            u128 pow2s = (u128)1U << s;
+            if (pow3 < pow2s) {
+                u128 denom = pow2s - pow3;
+                u128 mn = add_c / denom;
+                if (mn <= 65535U && pow3 <= UINT32_MAX && add_c <= UINT32_MAX) {
                     drops = true;
                     min_n = (uint16_t)mn;
                 }
@@ -1641,16 +1644,18 @@ int main(int argc, char **argv) {
             run_m1 = true;
         } else if (strcmp(argv[i], "--mersenne-max") == 0 && i + 1 < argc) {
             uint64_t tmp = 0ULL;
-            if (!parse_u64(argv[++i], &tmp) || tmp > 1000ULL) {
-                fprintf(stderr, "Invalid --mersenne-max value (0..1000)\n");
+            if (!parse_u64(argv[++i], &tmp) || tmp > MAX_MERSENNE_K) {
+                fprintf(stderr, "Invalid --mersenne-max value (0..%llu)\n",
+                        (unsigned long long)MAX_MERSENNE_K);
                 return 2;
             }
             mersenne_max = (uint32_t)tmp;
             run_m2 = (mersenne_max > 0U);
         } else if (strcmp(argv[i], "--sieve-bits") == 0 && i + 1 < argc) {
             uint64_t tmp = 0ULL;
-            if (!parse_u64(argv[++i], &tmp) || (tmp != 0ULL && tmp != 16ULL && tmp != 18ULL)) {
-                fprintf(stderr, "Invalid --sieve-bits value (supported: 0, 16, 18)\n");
+            if (!parse_u64(argv[++i], &tmp) ||
+                (tmp != 0ULL && tmp != 16ULL && tmp != 18ULL && tmp != 20ULL)) {
+                fprintf(stderr, "Invalid --sieve-bits value (supported: 0, 16, 18, 20)\n");
                 return 2;
             }
             sieve_bits = (uint32_t)tmp;
@@ -1672,7 +1677,7 @@ int main(int argc, char **argv) {
             json_out = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr,
-                    "Usage: %s [--range-end N] [--mersenne-max K] [--sieve-bits 0|16|18] "
+                    "Usage: %s [--range-end N] [--mersenne-max K] [--sieve-bits 0|16|18|20] "
                     "[--max-steps S] [--threads T] [--json-out PATH|-]\n",
                     argv[0]);
             return 0;

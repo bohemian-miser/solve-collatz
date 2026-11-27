@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Pure-stdlib Python wrapper for `glide_hunter.c` (Track B `DISPROVE-003` Phase 3).
+"""Pure-stdlib Python wrapper for `glide_hunter.c` (Track B `DISPROVE-003` Phase 4).
 
-Auto-compiles `search/glide_hunter/glide_hunter.c` into `/tmp/solve_collatz_glide_hunter`
-(or `/tmp/solve_collatz_glide_hunter_asan` under `--asan`), keeping the git working tree
-100% free of build artifacts. Enforces strict RFC-8259 JSON serialization, independently
-cross-verifies every reported Mode 1 record seed and Mode 2 sample in pure Python `int`
-arithmetic, validates sieve equivalence across `--sieve-bits 0|16|18`, and emits
-deterministic SHA-256-hashed JSON sweep summaries.
+Auto-compiles `search/glide_hunter/glide_hunter.c` into content-hashed
+`/tmp/solve_collatz_glide_hunter_<sha12>[_asan]` via `scripts/native_cache.py`,
+keeping the git working tree 100% free of build artifacts. Enforces strict RFC-8259
+JSON serialization, independently cross-verifies every reported Mode 1 record seed
+and Mode 2 sample in pure Python `int` arithmetic, validates sieve equivalence across
+`--sieve-bits 0|16|18|20`, and emits deterministic SHA-256-hashed JSON sweep summaries.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
-import os
 import pathlib
 import re
 import subprocess
@@ -24,25 +21,28 @@ from typing import Any
 
 
 REPO_SEARCH_DIR = pathlib.Path(__file__).resolve().parent
+REPO_ROOT = REPO_SEARCH_DIR.parent.parent
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from native_cache import (  # type: ignore  # noqa: E402
+    atomic_compile,
+    cached_binary_path,
+    canonical_sha256,
+    dump_strict_json,
+    loads_strict_json,
+)
+
 C_SOURCE = REPO_SEARCH_DIR / "glide_hunter.c"
 
 
-def _cached_bin_path(asan: bool) -> pathlib.Path:
-    """Return a content-hashed `/tmp/` binary path so worktrees/branches never collide."""
-    digest = hashlib.sha256(C_SOURCE.read_bytes()).hexdigest()[:12]
-    suffix = "_asan" if asan else ""
-    return pathlib.Path(f"/tmp/solve_collatz_glide_hunter_{digest}{suffix}")
-
-
 def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
-    """Compile `glide_hunter.c` into `/tmp/` keyed by source SHA-256."""
+    """Compile `glide_hunter.c` into `/tmp/` via `scripts/native_cache.py`."""
     if not C_SOURCE.exists():
         raise FileNotFoundError(f"Missing C source: {C_SOURCE}")
-    target = _cached_bin_path(asan=asan)
-    if not force and target.exists():
-        return target
-
-    tmp_bin = pathlib.Path(f"{target}.{os.getpid()}")
+    suffix = "_asan" if asan else ""
+    target = cached_binary_path("solve_collatz_glide_hunter", [C_SOURCE], suffix=suffix)
     cmd = [
         "gcc",
         "-O2" if asan else "-O3",
@@ -54,34 +54,8 @@ def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
     ]
     if asan:
         cmd.extend(["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
-    cmd.extend([str(C_SOURCE), "-lm", "-o", str(tmp_bin)])
-
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode != 0:
-        if tmp_bin.exists():
-            tmp_bin.unlink()
-        raise RuntimeError(f"gcc failed ({res.returncode}):\n{res.stderr}")
-    os.replace(tmp_bin, target)
-    return target
-
-
-def _reject_constant(val: str) -> None:
-    raise ValueError(f"Non-RFC-8259 JSON constant: {val}")
-
-
-def parse_strict_json(raw: str) -> dict[str, Any]:
-    """Parse JSON strictly rejecting NaN, Infinity, and -Infinity."""
-    data = json.loads(raw, parse_constant=_reject_constant)
-    json.dumps(data, allow_nan=False)
-    return data
-
-
-def canonical_sha256(canonical_obj: dict[str, Any]) -> str:
-    """Compute reproducible SHA-256 digest over the timing-free canonical payload."""
-    encoded = json.dumps(
-        canonical_obj, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    cmd.extend([str(C_SOURCE), "-lm", "-o", "{out}"])
+    return atomic_compile(cmd, target, force=force)
 
 
 def python_orbit_stats(n: int) -> tuple[int, int, int]:
@@ -221,7 +195,7 @@ def run_engine(
     res = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if res.returncode != 0:
         raise RuntimeError(f"glide_hunter exited with {res.returncode}:\n{res.stderr}")
-    data = parse_strict_json(res.stdout)
+    data = loads_strict_json(res.stdout)
     canon = data["canonical"]
     if verify_python:
         if "mode1_range" in canon:
@@ -289,11 +263,11 @@ def run_self_test(range_end: int, sieve_bits: int, asan: bool = False) -> dict[s
     if canon["u128_bigint_fallbacks"] == 0:
         raise AssertionError("Expected u128->bigint fallback to exercise at k <= 700")
 
-    # Sieve equivalence proof on 1..200,000: --sieve-bits 0 vs 16 vs 18
+    # Sieve equivalence proof on 1..1,200,000 (> 2^20 so mod-2^20 sieve activates): 0 vs 16 vs 18 vs 20
     equiv_ref = None
-    for sb in (0, 16, 18):
+    for sb in (0, 16, 18, 20):
         sub = run_engine(
-            range_end=200_000,
+            range_end=1_200_000,
             mersenne_max=None,
             sieve_bits=sb,
             asan=asan,
@@ -331,7 +305,7 @@ def run_self_test(range_end: int, sieve_bits: int, asan: bool = False) -> dict[s
     )
     if budget_res.returncode != 10:
         raise AssertionError(f"Expected exit code 10 on budget exhaustion, got {budget_res.returncode}")
-    diag_json = parse_strict_json(budget_res.stdout)["canonical"].get("failure_diagnostic", {})
+    diag_json = loads_strict_json(budget_res.stdout)["canonical"].get("failure_diagnostic", {})
     if diag_json.get("kind") != "step_budget_exceeded" or diag_json.get("seed") != "27":
         raise AssertionError(f"Unexpected failure_diagnostic payload: {diag_json}")
 
@@ -353,9 +327,9 @@ def main() -> int:
     parser.add_argument(
         "--sieve-bits",
         type=int,
-        choices=(0, 16, 18),
-        default=18,
-        help="Affine pre-drop sieve modulus bits (0=off, 16, or 18; default 18)",
+        choices=(0, 16, 18, 20),
+        default=20,
+        help="Affine pre-drop sieve modulus bits (0=off, 16, 18, or 20; default 20)",
     )
     parser.add_argument("--max-steps", type=int, default=None, help="Explicit step budget per seed")
     parser.add_argument("--threads", type=int, default=None, help="Worker thread count (1..64)")
@@ -382,10 +356,7 @@ def main() -> int:
 
     elapsed = time.monotonic() - t0
     if args.log_json:
-        args.log_json.parent.mkdir(parents=True, exist_ok=True)
-        args.log_json.write_text(
-            json.dumps(data, indent=2, allow_nan=False) + "\n", encoding="utf-8"
-        )
+        dump_strict_json(data, args.log_json)
 
     canon = data["canonical"]
     telem = data.get("telemetry", {})
