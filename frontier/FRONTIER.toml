@@ -109,10 +109,10 @@ id = "PROVE-C1"
 track = "Prove"
 status = "IN_PROGRESS"
 title = "Track A (Automata/Sieve): verified modular covering & residue-class descent certificates"
-lean_file = "Collatz/Prove/Automata/ModularDescent.lean"
+lean_file = "Collatz/Prove/Automata/SieveObstruction.lean"
 target_file = "Collatz/Prove/Automata/"
-needs = ["CORE-003"]
-barrier_notes = "Quantifies covered/uncovered density (3/4 mod 4, 13/16 mod 16, 237/256 mod 256) and certifies REF-002 incompleteness on 2^K - 1; cannot claim full covering without non-local invariant."
+needs = ["CORE-003", "CORE-004"]
+barrier_notes = "ModularDescent (3/4 mod 4, 13/16 mod 16, 237/256 mod 256) + SieveObstruction (960/1024 mod 1024, 3870/4096 mod 4096, unconditional n>=2 covered descent, density monotonicity, exponential survival 2^m <= u(3m+1), Z_2 projective towers from -5 & -19/11, Barrier 2 5n+1 contrast); cannot claim 100% covering without non-local invariant (REF-002)."
 
 [[node]]
 id = "DISPROVE-002"
