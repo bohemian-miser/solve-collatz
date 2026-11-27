@@ -1,5 +1,11 @@
 {
   "schema": "solve-anything-claims/v1",
-  "claims": {},
-  "updated_at": "2026-11-27T12:54:18Z"
+  "claims": {
+    "DISPROVE-003": {
+      "user": "bohemian-miser",
+      "claimed_at": "2026-11-27T13:09:44Z",
+      "expires_at": "2026-11-28T13:09:44Z"
+    }
+  },
+  "updated_at": "2026-11-27T13:09:44Z"
 }
