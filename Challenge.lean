@@ -1,40 +1,51 @@
 /-
-Copyright (c) 2026 The solve-anything contributors. All rights reserved.
+Copyright (c) 2026 The solve-collatz contributors. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 module
 
 /-!
-# Frozen Challenge Statement (`solve-anything` template)
+# Frozen Challenge Statements for `solve-collatz`
 
 This file is **FROZEN** and human-owned. Automated CI rejects any PR that modifies it.
 
-To launch a collaborative swarm for ANY open conjecture:
-1. Run `python3 scripts/init_problem.py --help` (or edit `problem.toml` and `Challenge.lean` directly).
-2. Replace `Conjecture` below with your exact Lean 4 target statement — ideally using minimal
-   core/standard definitions so any human or external checker can audit the statement by eye in
-   10 seconds.
-3. Freeze `Challenge.lean` on `main` (enforced automatically by `scripts/check_challenge_frozen.py`).
+Both tracks of `solve-collatz` target the exact statements below, using ONLY Lean core
+definitions (`Nat`) with zero Mathlib or external-library dependencies so any human or
+independent kernel checker can verify the statements by inspection in 10 seconds.
 
-Both tracks target this single frozen file:
-* **Track A (`<LeanRoot>/Prove/`):** Prove `Conjecture`.
-* **Track B (`<LeanRoot>/Disprove/`):** Prove `Disproof` (`:= ¬ Conjecture`).
+* **Track A (`Collatz/Prove/`):** Prove `SolveCollatz.CollatzConjecture`.
+* **Track B (`Collatz/Disprove/`):** Prove `SolveCollatz.CollatzDisproof` (equivalently, exhibit a
+  non-trivial positive cycle or a divergent positive orbit).
 -/
 
 @[expose] public section
 
-namespace Problem
+namespace SolveCollatz
 
-/-- **Placeholder predicate** — replace with your open conjecture's elementary definition. -/
-def TargetProp (n : Nat) : Prop :=
-  0 < n → n + 1 > n
+/-- One step of the standard Collatz map on `ℕ`: `n / 2` if `n` is even, `3 * n + 1` if odd. -/
+def collatzStep (n : Nat) : Nat :=
+  if n % 2 = 0 then n / 2 else 3 * n + 1
 
-/-- **Track A target (replace with your open conjecture):** every instance satisfies `TargetProp`. -/
-def Conjecture : Prop :=
-  ∀ n : Nat, TargetProp n
+/-- The `k`-th iterate of `collatzStep` starting from `n`. -/
+def collatzIter : Nat → Nat → Nat
+  | 0, n => n
+  | k + 1, n => collatzIter k (collatzStep n)
 
-/-- **Track B target (disproof):** exact logical negation of `Conjecture`. -/
-def Disproof : Prop :=
-  ¬ Conjecture
+/-- **The Collatz Conjecture (Track A target):** every positive integer eventually reaches `1`. -/
+def CollatzConjecture : Prop :=
+  ∀ n : Nat, 0 < n → ∃ k : Nat, collatzIter k n = 1
 
-end Problem
+/-- **Disproof of the Collatz Conjecture (Track B target):** negation of `CollatzConjecture`. -/
+def CollatzDisproof : Prop :=
+  ¬ CollatzConjecture
+
+/-- A positive integer `n` lies on a non-trivial cycle if it returns to `n` in `k > 0` steps
+without ever visiting `1`, `2`, or `4`. -/
+def HasNontrivialCycle : Prop :=
+  ∃ n k : Nat, 0 < n ∧ 0 < k ∧ collatzIter k n = n ∧ ∀ j : Nat, j < k → collatzIter j n ≠ 1
+
+/-- A positive integer `n` has a divergent orbit if its trajectory is unbounded. -/
+def HasDivergentOrbit : Prop :=
+  ∃ n : Nat, 0 < n ∧ ∀ B : Nat, ∃ k : Nat, B < collatzIter k n
+
+end SolveCollatz

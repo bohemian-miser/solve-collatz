@@ -1,59 +1,130 @@
-# Frontier Research DAG (`solve-anything` template)
+# Frontier Research DAG (`solve-collatz`)
 # States: PROVED | OPEN_SUBGOAL | IN_PROGRESS | REFUTED | BARRIER_BLOCKED
 # Tracks: Core | Known | Prove | Disprove | Search
 
 [meta]
-schema = "solve-anything-frontier/v1"
+schema = "solve-collatz-frontier/v1"
 frozen_challenge = "Challenge.lean"
 
 [[node]]
 id = "CORE-001"
 track = "Core"
 status = "PROVED"
-title = "Frozen Challenge statement and counterexample bridge lemma (Track B -> Disproof)"
-lean_file = "Problem/Core/Basic.lean"
+title = "Core dynamics and Track B bridge theorems (cycles & divergence -> CollatzDisproof)"
+lean_file = "Collatz/Core/Basic.lean"
+needs = []
+
+[[node]]
+id = "CORE-002"
+track = "Core"
+status = "PROVED"
+title = "Formalized barrier counterexamples (3n-1 cycle 5, 5n+1 cycle 13, Z_<0 cycle -5)"
+lean_file = "Collatz/Core/GeneralMaps.lean"
 needs = []
 
 [[node]]
 id = "DISPROVE-001"
 track = "Disprove"
 status = "PROVED"
-title = "Kernel-verified CounterexampleCert checker implying Disproof"
-lean_file = "Problem/Disprove/Cert.lean"
+title = "Kernel-verified NontrivialCycleCert checker implying CollatzDisproof"
+lean_file = "Collatz/Disprove/Cert.lean"
 needs = ["CORE-001"]
 
 [[node]]
-id = "CORE-002"
+id = "CORE-003"
 track = "Core"
 status = "OPEN_SUBGOAL"
-title = "Formalized barrier counterexamples (nearby variants where the conjecture is known to fail)"
-target_file = "Problem/Core/Barriers.lean"
+title = "Accelerated Syracuse map on odd positive integers & parity-vector affine formula"
+target_file = "Collatz/Core/Syracuse.lean"
 needs = ["CORE-001"]
-barrier_notes = "Anchor review/barrier-check.md with kernel-verified counterexamples to weakened variants."
+barrier_notes = "Definitional bridge; expresses k odd steps as (3^k n + C(v)) / 2^S."
+
+[[node]]
+id = "CORE-004"
+track = "Core"
+status = "OPEN_SUBGOAL"
+title = "2-adic extension of the Syracuse map and periodic points in Z_2 (Barrier 4 witness)"
+target_file = "Collatz/Core/TwoAdic.lean"
+needs = ["CORE-003"]
+barrier_notes = "Formally exhibits non-trivial 2-adic periodic points to power review/barrier-check.md."
 
 [[node]]
 id = "KNOWN-001"
 track = "Known"
 status = "OPEN_SUBGOAL"
-title = "Formalize foundational known literature results (useful to both Track A and Track B)"
-target_file = "Problem/Known/Literature.lean"
-needs = ["CORE-001"]
-barrier_notes = "Replace with exact published theorems relevant to your conjecture."
+title = "Terras (1976) & Everett (1977): almost all n have finite stopping time (natural density 1)"
+target_file = "Collatz/Known/TerrasDensity.lean"
+needs = ["CORE-003"]
+barrier_notes = "Distinguishes 3n+1 (drift log_2(3/4) < 0) from 5n+1 (drift log_2(5/4) > 0)."
+
+[[node]]
+id = "KNOWN-002"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "Steiner (1977) circuit theorem: no non-trivial 1-cycle (up-then-down cycle)"
+target_file = "Collatz/Known/SteinerCircuit.lean"
+needs = ["CORE-003"]
+barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1 and Z_<0)."
+
+[[node]]
+id = "KNOWN-003"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "Eliahou (1993) / Simons-de Weger (2005) cycle-length lower bounds via Baker/continued fractions"
+target_file = "Collatz/Known/CycleLengthBounds.lean"
+needs = ["KNOWN-002"]
+barrier_notes = "Narrows both Track A (cycle elimination) and Track B (prunes cycle search space)."
+
+[[node]]
+id = "KNOWN-004"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "Bridge to Terence Tao (2022) almost-all almost-bounded orbits (e.g. via gotrevor/tao-collatz)"
+target_file = "Collatz/Known/TaoBridge.lean"
+needs = ["CORE-003", "KNOWN-001"]
+barrier_notes = "Imports/connects Syracuse random-walk Fourier decay to Challenge.lean."
 
 [[node]]
 id = "PROVE-A1"
 track = "Prove"
 status = "OPEN_SUBGOAL"
-title = "Track A primary proof strategy (replace with concrete reduction/subgoal)"
-target_file = "Problem/Prove/StrategyA.lean"
-needs = ["CORE-002", "KNOWN-001"]
-barrier_notes = "Must explicitly explain where the strategy fails on the barrier variants in CORE-002."
+title = "Track A (Ergodic/Tao): sharpen exceptional-set bounds beyond logarithmic density 1"
+target_file = "Collatz/Prove/Ergodic/"
+needs = ["KNOWN-004"]
+barrier_notes = "Must explain why exceptional zero-density set cannot hide a positive cycle or divergent orbit."
+
+[[node]]
+id = "PROVE-B1"
+track = "Prove"
+status = "OPEN_SUBGOAL"
+title = "Track A (Diophantine): k-cycle / m-circuit non-existence via linear forms in logarithms & p-adic heights"
+target_file = "Collatz/Prove/Diophantine/"
+needs = ["KNOWN-003"]
+barrier_notes = "Must fail on 3n-1 (5-cycle) and Z_<0 (-5, -17 cycles) via exact archimedean positivity."
+
+[[node]]
+id = "PROVE-C1"
+track = "Prove"
+status = "OPEN_SUBGOAL"
+title = "Track A (Automata/Sieve): verified modular covering & residue-class descent certificates"
+target_file = "Collatz/Prove/Automata/"
+needs = ["CORE-003"]
+barrier_notes = "Must quantify uncovered density cleanly; cannot claim full covering without non-local invariant."
 
 [[node]]
 id = "DISPROVE-002"
 track = "Disprove"
 status = "OPEN_SUBGOAL"
-title = "Track B high-speed off-kernel counterexample hunter emitting Lean CounterexampleCerts"
-target_file = "search/hunter.py"
+title = "Track B (Diophantine Cycle Hunter): continued-fraction / lattice-LLL search for near-integer rational cycles (2^S - 3^k) | C(v)"
+target_file = "search/cycle_hunter.py"
 needs = ["DISPROVE-001"]
-barrier_notes = "Target structured algebraic/computational danger zones beyond known lower bounds."
+barrier_notes = "Targets exact divisibility (2^S - 3^k) | C(v) for structured parity vectors v; any hit emits Lean NontrivialCycleCert."
+
+[[node]]
+id = "DISPROVE-003"
+track = "Disprove"
+status = "OPEN_SUBGOAL"
+title = "Track B (Divergent / Glide Hunter): high-throughput Rust/SIMD search for extreme stopping-time & glide anomalies + reproducible logs"
+target_file = "search/glide_hunter/"
+needs = ["DISPROVE-001"]
+barrier_notes = "Produces verifiable computational certificates & stress-test orbits for barrier_redteam.py."

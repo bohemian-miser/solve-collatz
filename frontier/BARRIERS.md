@@ -1,15 +1,15 @@
-# Known Mathematical Barriers (`frontier/BARRIERS.md`)
+# The Five Collatz Barriers (Mandatory Filter for Track A `Prove/`)
 
-Every serious open conjecture has **relativization / variant barriers** — closely related problems where the analogous statement is **FALSE**. Any Track A (`Prove/`) argument that fails to distinguish the true problem from these false variants is automatically suspect.
+Every proposed proof strategy or intermediate conjecture on Track A (`Collatz/Prove/`) **must explain why it breaks on each of these five barrier regimes**. Four of the five are already known to admit counterexamples (the first three are **formally proved in `Collatz/Core/GeneralMaps.lean`**).
 
-## How to Use This File (When Initializing a New Conjecture)
-
-List 3–6 concrete barriers for your problem and, wherever possible, **formalize the counterexample variants directly in Lean (`<LeanRoot>/Core/Barriers.lean`)** plus an automated millisecond red-team script in `search/`:
-
-| Barrier | Nearby Variant / Obstruction | Known Failure / Counterexample | What a Valid Track A Proof Must Use |
+| # | Barrier Regime | Concrete Counterexample / Fact | What It Kills |
 |---|---|---|---|
-| **B1 (Variant counterexample)** | *(Replace with a natural perturbed version of your conjecture that is false)* | *(Concrete Lean-verified counterexample)* | *(Exact property of the true conjecture broken in B1)* |
-| **B2 (Density / heuristic barrier)** | *(Almost-all / probabilistic / local-only methods that cannot rule out sparse counterexamples)* | *(Sparse or local counterexamples)* | *(Global / rigid obstruction)* |
-| **B3 (Known impossibility / undecidability)** | *(Generalization known to be undecidable or false)* | *(Published theorem)* | *(Exact specialization avoiding the general class)* |
+| **1** | **`3n - 1` on `ℕ⁺`** | `5 → 14 → 7 → 20 → 10 → 5` (`three_n_minus_one_cycle_5`), plus `17 → … → 17` | Any parity/drift-only argument that ignores the sign of `+1` vs `-1`. |
+| **2** | **`5n + 1` on `ℕ⁺`** | `13 → 66 → 33 → 166 → 83 → 416 → 208 → 104 → 52 → 26 → 13` (`five_n_plus_one_cycle_13`) | Any purely algebraic/modular argument that does not use the negative average log-drift `log₂(3/4) < 0` (since `log₂(5/4) > 0`). |
+| **3** | **`3n + 1` on `ℤ_{<0}`** | `-5 → -14 → -7 → -20 → -10 → -5` (`neg_int_cycle_neg5`), plus `-1` and `-17` | Any argument using only the ring arithmetic of `ℤ` without positivity (`0 < n`). |
+| **4** | **`3n + 1` on `ℤ₂` ($2$-adic integers)** | Every finite parity vector `v` gives a unique rational `2`-adic periodic point `x = C(v) / (2^S - 3^k) ∈ ℤ₂` | Any purely `2`-adic / local congruence / finite-automaton argument: locally in `ℤ₂`, cycles are dense! Any proof MUST use the global integrality + archimedean positivity of `ℕ⁺`. |
+| **5** | **Conway (1972) Undecidability** | Generalized piecewise-affine maps `T(n) = a_i n + b_i` (`n ≡ i mod P`) simulate arbitrary Minsky machines, so halting is undecidable | Any generic local syntactic / induction schema that works uniformly for arbitrary periodic piecewise-affine maps. |
 
-See `bohemian-miser/solve-collatz` for a complete worked example (`3n - 1` cycle at `5`, `5n + 1` cycle at `13`, `ℤ_{<0}` cycle at `-5`, `ℤ₂` rational periodic points, and Conway undecidability).
+## How Swarms Must Use This File
+1. Before opening a Track A conjecture or proof PR, run `python3 search/barrier_redteam.py` on your proposed invariant/predicate.
+2. In your PR's `Quality pass: Q4`, explicitly state which of the 5 barriers your lemma distinguishes and why it fails on the excluded regimes.

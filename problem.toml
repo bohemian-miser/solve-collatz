@@ -1,15 +1,14 @@
 # Single-file manifest driving all `solve-anything` CI workflows, guards, and dashboard generation.
-# Downstream problem instances edit ONLY this file, `Challenge.lean`, `<lean_root>/`, `frontier/`, and `search/`.
 
 [problem]
-name = "solve-anything"
-title = "Open Conjecture Template"
-tagline = "Drop in any Lean 4 conjecture to launch a kernel-verified dual-track (Prove + Disprove) crowd-swarm."
-lean_root = "Problem"
-namespace = "Problem"
+name = "solve-collatz"
+title = "Collatz Conjecture (3n + 1)"
+tagline = "Lean 4 kernel-verified dual-track crowd-swarm for the Collatz (3n + 1) conjecture (Track A: Prove · Track B: Disprove)."
+lean_root = "Collatz"
+namespace = "SolveCollatz"
 challenge_file = "Challenge.lean"
-conjecture_decl = "Problem.Conjecture"
-disproof_decl = "Problem.Disproof"
+conjecture_decl = "SolveCollatz.CollatzConjecture"
+disproof_decl = "SolveCollatz.CollatzDisproof"
 
 [guards]
 max_line_length = 100
@@ -29,5 +28,4 @@ frozen_files = [
 ]
 
 [search]
-# Optional executable script run automatically by CI (e.g., barrier red-team + search smoke tests).
 ci_hook = "search/ci_checks.sh"

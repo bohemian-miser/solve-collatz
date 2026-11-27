@@ -1,6 +1,6 @@
-name = "solve-anything"
+name = "solve-collatz"
 version = "0.1.0"
-defaultTargets = ["Challenge", "Problem"]
+defaultTargets = ["Challenge", "Collatz"]
 
 [leanOptions]
 warningAsError = true
@@ -11,4 +11,4 @@ relaxedAutoImplicit = false
 name = "Challenge"
 
 [[lean_lib]]
-name = "Problem"
+name = "Collatz"

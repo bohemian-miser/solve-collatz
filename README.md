@@ -1,79 +1,60 @@
-# `solve-anything`
+# `solve-collatz`
 
-**Drop in any Lean 4 conjecture and turn this repository into an open-source, kernel-verified dual-track (`Prove` + `Disprove`) crowd-swarm.**
+> Built on [`bohemian-miser/solve-anything`](https://github.com/bohemian-miser/solve-anything) — drop-in Lean 4 dual-track crowd-swarm framework (`git merge upstream/main` compatible).
 
-Click **"Use this template"** (or clone with `git remote add upstream` so you can pull future framework upgrades with `git merge upstream/main`), drop your open conjecture into frozen `Challenge.lean`, and get a complete multi-agent mathematical collaboration engine out of the box:
+An open-source, Lean 4 kernel-verified **dual-track research swarm** for the Collatz ($3n+1$) conjecture — designed for humans and autonomous AI agent fleets to collaborate in parallel on **both** directions simultaneously:
 
-- **One frozen ground truth (`Challenge.lean` + `problem.toml`):** Both tracks target the exact same Lean 4 statement (`Conjecture`) and its negation (`Disproof := ¬ Conjecture`). CI rejects any PR that modifies frozen files, introduces `sorry`/`native_decide`/escape hatches, or depends on anything outside `[propext, Classical.choice, Quot.sound]`.
-- **Dual-Track Architecture (Prove + Disprove in one repo):**
-  - **Track A (`<LeanRoot>/Prove/`):** Proving `Conjecture`, standing on formalized literature (`<LeanRoot>/Known/`).
-  - **Track B (`<LeanRoot>/Disprove/` + `search/`):** Hunting for a counterexample (`Disproof`) with fast off-kernel Python/Rust/C++/GPU/SAT engines whose hits compile into **Lean-kernel-verified certificates** (`Cert.lean`).
-  - Shared lemmas in `Core/` and `Known/` compound value for *both* directions simultaneously.
-- **Built-in Mathematical Immune System (`frontier/BARRIERS.md` + `frontier/REFUTED.md`):**
-  - Formalize nearby false variants as barrier counterexamples so Track A ideas are red-teamed in milliseconds before burning proof compute.
-  - Record dead ends permanently in `frontier/REFUTED.md` so fresh swarms never loop on disproved ideas.
-- **Zero-Friction Swarm Coordination & Live Dashboard (GitHub Actions + Pages):**
-  - **Hard Verification Gate (`verify.yml`):** `.elan`/`.lake` caching, frozen-file guard, source hygiene guard (`<= 50`-line proofs, `<= 100`-char lines), `lake build` (`warningAsError = true`), strict axiom audit, and problem-specific `search/ci_checks.sh`.
-  - **Zero-Friction Claims Bot (`claims.yml`):** Any outside human or agent claims an open node by commenting `/claim <NODE_ID>` on the pinned **Frontier Claims** issue (24h auto-expiring TTL, zero push access required).
-  - **Live Frontier Dashboard (`dashboard.yml`):** Auto-publishes an interactive dark-mode Frontier DAG + machine-readable `frontier.json` to GitHub Pages on every merge.
-  - **5 Adversarial Review Rubrics (`review/`):** Parallel multi-agent review gates (`correctness`, `nontriviality`, `barrier-check`, `proof-quality`, `quality-pass` `Q1`–`Q5`) + sandboxed self-hosted reviewer/worker blueprint (`docs/SELF_HOSTED_AGENT.md`).
+- **Track A (`Collatz/Prove/`):** Proving the conjecture (`CollatzConjecture`), standing on formalized modern literature (`Collatz/Known/`: Terras, Krasikov–Lagarias, Simons–de Weger, Tao's Syracuse transfer-operator framework).
+- **Track B (`Collatz/Disprove/` + `search/`):** Hunting for a counterexample (`¬ CollatzConjecture` via a non-trivial positive cycle or a divergent orbit) using high-speed search engines whose hits compile into **100% Lean-kernel-verified certificates** (`NontrivialCycleCert`).
 
 ---
 
-## Launch a New Conjecture in 60 Seconds
+## Why One Repo with Two Tracks?
 
-1. **Create your repo from this template** (or fork/clone with `upstream` pointing here so you can run `git merge upstream/main` for framework upgrades):
-   ```bash
-   git clone https://github.com/bohemian-miser/solve-anything.git solve-goldbach
-   cd solve-goldbach
-   git remote rename origin upstream
-   ```
-2. **Initialize your problem metadata and Lean root in one command:**
-   ```bash
-   python3 scripts/init_problem.py \
-     --name solve-goldbach \
-     --title "Goldbach Conjecture" \
-     --lean-root Goldbach \
-     --namespace SolveGoldbach \
-     --tagline "Every even integer > 2 is the sum of two primes."
-   ```
-3. **Drop your exact conjecture into `Challenge.lean`** (using minimal definitions so any human can inspect it in 10 seconds), add your problem's known barriers to `frontier/BARRIERS.md`, seed open subgoals in `frontier/FRONTIER.toml`, and add a fast red-team/search hook in `search/ci_checks.sh`.
-4. **Verify locally and push:**
-   ```bash
-   lake build
-   lake env lean scripts/PrintAxioms.lean
-   python3 scripts/check_source_guards.py
-   bash search/ci_checks.sh
-   ```
-5. **Enable GitHub Pages** (`Settings -> Pages -> GitHub Actions`), create the `claims` label + pinned **Frontier Claims** issue, and enable branch protection requiring `verify`.
-
----
-
-## Live Instances Built on `solve-anything`
-
-- **`bohemian-miser/solve-collatz`** — Dual-track crowd-swarm for the Collatz ($3n+1$) conjecture (with Lean-proved `3n-1`, `5n+1`, and `ℤ_{<0}` barriers, Diophantine cycle hunter, and kernel-verified `NontrivialCycleCert`).
+1. **One frozen ground truth (`Challenge.lean`):** Both tracks target the exact same frozen Lean 4 statement (`CollatzConjecture`) and its negation (`CollatzDisproof := ¬ CollatzConjecture`), checked strictly against `[propext, Classical.choice, Quot.sound]` plus non-module kernel replay.
+2. **Shared mathematics compounds across both directions:** Every theorem proved in `Collatz/Core/` or `Collatz/Known/` (parity-vector arithmetic, $2$-adic conjugation, Syracuse drift, cycle-length lower bounds) simultaneously builds lemmas for `Prove/` *and* prunes the search space for `Disprove/`.
+3. **Built-in mathematical immune system (`search/barrier_redteam.py` + `frontier/BARRIERS.md`):** Collatz has famous traps — $3n+1$ actually has non-trivial cycles in $\mathbb{Z}_{<0}$ and $\mathbb{Z}_2$, and $5n+1$ / $3n-1$ fail on $\mathbb{N}^+$ (all **formally proved in `Collatz/Core/GeneralMaps.lean`**!). Every conjectured subgoal on Track A must pass automated counterexample & barrier red-teaming *before* agents spend proof compute on it.
+4. **Permanent Negative Knowledge Base (`frontier/REFUTED.md`):** Disproved intermediate conjectures and barrier-blocked ideas are recorded permanently with exact counterexamples so fresh agents never waste hundreds of runs retrying dead ends.
 
 ---
 
 ## Repository Layout
 
-| Path | Owned By | Role |
-|---|---|---|
-| `problem.toml` | Problem (FROZEN) | Single manifest driving all CI workflows, guards, and dashboard generation. |
-| `Challenge.lean` | Problem (FROZEN) | Canonical statements (`Conjecture`, `Disproof := ¬ Conjecture`). CI blocks PR edits. |
-| `<LeanRoot>/Core/` | Problem | Shared core lemmas, bridge theorems, and formalized barrier counterexamples. |
-| `<LeanRoot>/Known/` | Problem | Formalized published literature usable by both Track A and Track B. |
-| `<LeanRoot>/Prove/` | Problem | Track A (TRUE): competing proof strategies, each barrier-checked. |
-| `<LeanRoot>/Disprove/` | Problem | Track B (FALSE): kernel-verified counterexample certificate checkers (`Cert.lean`). |
-| `search/` | Problem | Fast off-kernel search engines & barrier red-teaming (`search/ci_checks.sh`). |
-| `frontier/` | Problem | Living DAG (`FRONTIER.toml`), barrier catalog (`BARRIERS.md`), dead-end log (`REFUTED.md`). |
-| `review/` | Framework | 5 adversarial review rubrics (`correctness`, `nontriviality`, `barrier-check`, `proof-quality`, `quality-pass`). |
-| `scripts/` | Framework | `check_challenge_frozen.py`, `check_source_guards.py`, `build_dashboard.py`, `init_problem.py`, `PrintAxioms.lean`. |
-| `.github/` | Framework | Zero-secret `verify.yml`, `claims.yml`, `dashboard.yml`, `label-pr.yml`, PR template. |
-| `docs/` | Framework | `SELF_HOSTED_AGENT.md` — sandboxed two-plane server setup for autonomous review & 24/7 workers. |
+| Path | Role |
+|---|---|
+| `Challenge.lean` | **FROZEN** canonical statements (`CollatzConjecture`, `CollatzDisproof`). CI blocks any PR modifying it. |
+| `Collatz/Core/` | Shared definitions (`collatzStep`, `syracuseStep`, `ReachesOne`, `HasNontrivialCycle`, `Diverges`) + formalized barrier counterexamples (`GeneralMaps.lean`: `3n-1`, `5n+1`, `ℤ_{<0}`). |
+| `Collatz/Known/` | Phase 1: Formalized known literature (Terras stopping times, Krasikov–Lagarias, Simons–de Weger cycle bounds, Tao 2022 bridge). |
+| `Collatz/Prove/` | Track A (TRUE): Competing proof attack trees (Ergodic/Transfer Operator, Diophantine/Cycles, Automata/Covering Sieves, Descent). |
+| `Collatz/Disprove/` | Track B (FALSE): Formal Lean counterexample certificate verifiers (`Cert.lean`) & obstruction theorems. |
+| `search/` | High-speed non-Lean search & automated red-team tools (`barrier_redteam.py`, `cycle_hunter.py`). |
+| `frontier/` | Living machine-readable Research DAG (`FRONTIER.toml`), `REFUTED.md`, and `BARRIERS.md`. |
+| `review/` | 5 adversarial review rubrics (`correctness`, `nontriviality`, `barrier-check`, `proof-quality`, `quality-pass`). |
+| `scripts/` | Hard CI guards (`check_challenge_frozen.py`, `check_source_guards.py`, `PrintAxioms.lean`) and atomic cooperative lease tool (`claim.sh`). |
 
 ---
 
-## Acknowledgments
+## Quick Start (Humans & Agent Fleets)
 
-Built from hard-won lessons collaborating on `leanprover-community/riemann-hypothesis` (`AGENTS.md`, readability norms, non-module kernel auditing) and `TauCetiProject/TauCeti` (multi-rubric adversarial AI review, `Q1`–`Q5` quality passes, cooperative swarm claiming).
+1. Read [`AGENTS.md`](AGENTS.md) and [`frontier/BARRIERS.md`](frontier/BARRIERS.md).
+2. Browse open, barrier-cleared subgoals on the **Live Frontier Dashboard** (`https://bohemian-miser.github.io/solve-collatz/` — machine-readable JSON at `frontier.json`) or in [`frontier/FRONTIER.toml`](frontier/FRONTIER.toml) (and check [`frontier/REFUTED.md`](frontier/REFUTED.md) so you don't repeat a dead end).
+3. Claim a node with **zero push permissions required** by commenting `/claim <NODE_ID>` on the pinned **Frontier Claims** issue (24h auto-expiring TTL; `/status` shows active leases).
+4. For Track A (`Prove/`) conjectures, run the automated red-team filter first:
+   ```bash
+   python3 search/barrier_redteam.py --verify-barriers
+   ```
+5. For Track B (`Disprove/`), run/extend `search/cycle_hunter.py` (or plug in a Rust/GPU hunter emitting `NontrivialCycleCert` verified by `Collatz/Disprove/Cert.lean`).
+6. Want to run a dedicated-server adversarial reviewer bot or 24/7 swarm worker safely? See [`docs/SELF_HOSTED_AGENT.md`](docs/SELF_HOSTED_AGENT.md).
+7. Run all local gates before opening a PR:
+   ```bash
+   python3 scripts/check_challenge_frozen.py origin/main HEAD
+   python3 scripts/check_source_guards.py
+   lake build
+   lake env lean scripts/PrintAxioms.lean
+   ```
+
+---
+
+## Existing Ecosystem & Acknowledgments
+
+This architecture draws directly on lessons from `leanprover-community/riemann-hypothesis` (`AGENTS.md` / `#8312` readability & `#7560` non-module replay), `TauCetiProject/TauCeti` (multi-rubric AI review, `Q1`–`Q5` quality passes, and atomic git-ref cooperative claims in `tauceti-claims`), and prior Lean 4 Collatz work including `gotrevor/tao-collatz` (Apache-2.0 formalization of Tao 2022) and `xrchz/CollatzLean`.

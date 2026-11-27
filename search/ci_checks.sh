@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Problem-specific barrier red-team & search smoke checks run automatically by `.github/workflows/verify.yml`.
-# Replace or extend this script in downstream problem repos (e.g. barrier_redteam.py, cycle_hunter.py).
 set -euo pipefail
 
-echo "PASS: Default solve-anything search CI hook (add problem-specific red-team & search smoke tests here)."
+echo "=== Collatz Barrier Red-Team Harness ==="
+python3 search/barrier_redteam.py --verify-barriers
+
+echo "=== Track B Diophantine Cycle-Hunter Smoke Test ==="
+python3 search/cycle_hunter.py --max-k 200
