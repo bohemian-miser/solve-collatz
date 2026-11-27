@@ -116,11 +116,11 @@ barrier_notes = "Quantifies covered/uncovered density (3/4 mod 4, 13/16 mod 16, 
 [[node]]
 id = "DISPROVE-002"
 track = "Disprove"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Track B (Diophantine Cycle Hunter): continued-fraction / lattice-LLL search for near-integer rational cycles (2^S - 3^k) | C(v)"
-target_file = "search/cycle_hunter.py"
+target_file = "search/mcircuit_hunter/"
 needs = ["DISPROVE-001"]
-barrier_notes = "Targets exact divisibility (2^S - 3^k) | C(v) for structured parity vectors v; any hit emits Lean NontrivialCycleCert."
+barrier_notes = "Targets exact divisibility (2^S - 3^k) | C(v) for structured parity vectors v; any hit emits Lean NontrivialCycleCert. Phase 1 (REF-004, cycle_hunter.py) refuted 1-circuits k<=5000, CF convergents k<=100000, 2-circuits k<=40, 3-circuits k<=24. Phase 2 (REF-007, search/mcircuit_hunter/mcircuit_hunter.c) exhaustively refuted 641,049,809 canonical m-circuits in the Simons-de Weger band (m=2 K<=80, m=3 K<=79, m=4 K<=58; 0 hits, 0 skips). General higher-m / LLL search remains open."
 
 [[node]]
 id = "DISPROVE-003"
