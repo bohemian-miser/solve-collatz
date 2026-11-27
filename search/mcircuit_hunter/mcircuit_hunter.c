@@ -1,7 +1,7 @@
 /*
- * mcircuit_hunter.c — High-throughput C11 canonical m-circuit Diophantine cycle hunter (m = 2, 3, 4).
+ * mcircuit_hunter.c — High-throughput C11 canonical m-circuit Diophantine cycle hunter (m = 2..5).
  *
- * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-002 Phase 2`).
+ * Track B (`Disprove/`) off-kernel search engine for `solve-collatz` (`DISPROVE-002 Phase 3`).
  *
  * Mathematical foundation (Simons-de Weger 2005 / Eliahou 1993):
  *   An m-circuit consists of m rising-then-falling blocks j = 0..m-1, where block j has
@@ -15,15 +15,18 @@
  *     - Block transition: 2^{s_j} * n_{j+1} = 3^{k_j} * n_j + (3^{k_j} - 2^{k_j}) < (4/3) * 3^{k_j} * n_j.
  *     - Multiplying over j = 0..m-1 yields the exact Simons-de Weger m-circuit upper bound:
  *           2^S < (4/3)^m * 3^K   <=>   2^S * 3^m < 4^m * 3^K.
+ *     - For m = 5, 243 * 2^S < 1024 * 3^K (checked via exact 640-bit integer arithmetic).
  *     - The looser general Eliahou bound (used in `search/cycle_hunter.py`) is:
  *           2^S * 3^K <= 10^K   (with S = S_min(K) always included).
  *
  * Arithmetic & UB safety:
- *   - Strict overflow guards enforce K <= 80 (3^80 < 2^127 < 2^128) and S <= 127
- *     before any `u128` shift or power computation; skipped shells increment `overflow_guard_skips`.
- *   - Overflow-free `add_mod128` and `mul_mod128` for all D < 2^127.
- *   - Innermost loop updates only via two `add_mod128` ops (zero inner-loop multiplications).
- *   - Lock-free pthread execution with deterministic canonical sorting at merge.
+ *   - Fast `u128` path for K <= 80, S <= 127 (D < 2^127).
+ *   - Multi-limb `u256_t` modular engine (`u256_add_mod` / `u256_mul_mod`) lifting the ceiling
+ *     to K <= 160, S <= 255 (D < 2^255) with zero overflow_guard_skips.
+ *   - Exact `u640_t` (10 x 64-bit limbs) for precomputation (up to 10^160) & hit recovery.
+ *   - Innermost loops update only via `add_mod` (zero inner-loop multiplications) and fast
+ *     threshold-guarded near-miss tracking.
+ *   - Lock-free pthread execution with strict error handling and deterministic merge.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -42,9 +45,11 @@
 
 __extension__ typedef unsigned __int128 u128;
 
-#define MAX_M 4U
-#define MAX_K_LIMIT 80U
-#define MAX_S_LIMIT 127U
+#define MAX_M 5U
+#define MAX_K_U128 80U
+#define MAX_S_U128 127U
+#define MAX_K_LIMIT 160U
+#define MAX_S_LIMIT 255U
 #define TOP_NEAR_PER_M 5U
 #define MAX_HITS_PER_WORKER 64U
 
@@ -53,10 +58,15 @@ typedef enum {
     BOUND_ELIAHOU = 1
 } bound_mode_t;
 
-/* 320-bit unsigned big-int (5 x 64-bit limbs) for exact S_max precomputation & hit verification. */
+/* 256-bit unsigned integer (4 x 64-bit little-endian limbs). */
 typedef struct {
-    uint64_t w[5];
-} u320_t;
+    uint64_t w[4];
+} u256_t;
+
+/* 640-bit unsigned big-int (10 x 64-bit limbs) for exact S_max precomputation & hit recovery. */
+typedef struct {
+    uint64_t w[10];
+} u640_t;
 
 typedef struct {
     uint32_t m;
@@ -64,9 +74,9 @@ typedef struct {
     uint32_t s;
     uint32_t k_vec[MAX_M];
     uint32_t l_vec[MAX_M];
-    u128 denom;
-    u128 rem;
-    u128 dist_num;
+    u256_t denom;
+    u256_t rem;
+    u256_t dist_num;
     long double dist_approx;
 } candidate_record_t;
 
@@ -76,8 +86,8 @@ typedef struct {
     uint32_t s;
     uint32_t k_vec[MAX_M];
     uint32_t l_vec[MAX_M];
-    u128 denom;
-    u320_t n_cand;
+    u256_t denom;
+    u640_t n_cand;
     bool is_trivial;
 } hit_record_t;
 
@@ -86,7 +96,7 @@ typedef struct {
     uint32_t k;
     uint32_t s;
     uint32_t k0;
-    uint32_t k1; /* used for m == 4 */
+    uint32_t k1; /* used for m == 4 and m == 5 */
 } work_task_t;
 
 typedef struct {
@@ -94,19 +104,28 @@ typedef struct {
     size_t task_count;
     uint32_t thread_id;
     uint32_t num_threads;
+    bool force_u256;
     uint64_t tested[MAX_M + 1];
     hit_record_t hits[MAX_HITS_PER_WORKER];
     size_t hit_count;
     candidate_record_t near[MAX_M + 1][TOP_NEAR_PER_M];
     size_t near_count[MAX_M + 1];
+    size_t near_worst_idx[MAX_M + 1];
+    long double near_worst_dist[MAX_M + 1];
 } worker_ctx_t;
 
-/* Precomputed exact tables for K <= 80, S <= 127. */
-static u128 g_pow3[MAX_K_LIMIT + 1U];
-static u128 g_pow2[MAX_S_LIMIT + 1U];
+/* Precomputed exact tables for u128 (K <= 80, S <= 127) and u256 (K <= 160, S <= 255). */
+static u128 g_pow3_128[MAX_K_U128 + 1U];
+static u128 g_pow2_128[MAX_S_U128 + 1U];
+static u256_t g_pow3_256[MAX_K_LIMIT + 1U];
+static u256_t g_pow2_256[MAX_S_LIMIT + 1U];
 static uint32_t g_s_min[MAX_K_LIMIT + 1U];
 static uint32_t g_s_max_eliahou[MAX_K_LIMIT + 1U];
 static uint32_t g_s_max_simons[MAX_M + 1U][MAX_K_LIMIT + 1U];
+
+/* -------------------------------------------------------------------------- */
+/* Overflow-free u128 and u256 modular arithmetic                             */
+/* -------------------------------------------------------------------------- */
 
 static inline u128 add_mod128(u128 a, u128 b, u128 m) {
     return (a >= m - b) ? (a - (m - b)) : (a + b);
@@ -131,30 +150,38 @@ static inline u128 mul_mod128(u128 a, u128 b, u128 m) {
     return res;
 }
 
-static u320_t u320_from_u128(u128 v) {
-    u320_t r;
-    memset(&r, 0, sizeof(r));
-    r.w[0] = (uint64_t)v;
-    r.w[1] = (uint64_t)(v >> 64);
+static inline u256_t u256_zero(void) {
+    u256_t r = {{0ULL, 0ULL, 0ULL, 0ULL}};
     return r;
 }
 
-static u320_t u320_mul_u64(u320_t a, uint64_t m) {
-    u320_t r;
-    memset(&r, 0, sizeof(r));
-    u128 carry = 0U;
-    for (size_t i = 0; i < 5; i++) {
-        u128 prod = (u128)a.w[i] * (u128)m + carry;
-        r.w[i] = (uint64_t)prod;
-        carry = prod >> 64;
+static inline u256_t u256_from_u64(uint64_t v) {
+    u256_t r = {{v, 0ULL, 0ULL, 0ULL}};
+    return r;
+}
+
+static inline u256_t u256_from_u128(u128 v) {
+    u256_t r = {{(uint64_t)v, (uint64_t)(v >> 64), 0ULL, 0ULL}};
+    return r;
+}
+
+static inline bool u256_is_zero(u256_t a) {
+    return (a.w[0] | a.w[1] | a.w[2] | a.w[3]) == 0ULL;
+}
+
+static inline int u256_cmp(u256_t a, u256_t b) {
+    for (int i = 3; i >= 0; i--) {
+        if (a.w[i] != b.w[i]) {
+            return (a.w[i] > b.w[i]) ? 1 : -1;
+        }
     }
-    return r;
+    return 0;
 }
 
-static u320_t u320_add(u320_t a, u320_t b) {
-    u320_t r;
+static inline u256_t u256_add(u256_t a, u256_t b) {
+    u256_t r;
     u128 carry = 0U;
-    for (size_t i = 0; i < 5; i++) {
+    for (size_t i = 0; i < 4; i++) {
         u128 s = (u128)a.w[i] + (u128)b.w[i] + carry;
         r.w[i] = (uint64_t)s;
         carry = s >> 64;
@@ -162,25 +189,214 @@ static u320_t u320_add(u320_t a, u320_t b) {
     return r;
 }
 
-static u320_t u320_shl(u320_t a, uint32_t shift) {
-    u320_t r;
-    memset(&r, 0, sizeof(r));
+static inline u256_t u256_sub(u256_t a, u256_t b) {
+    u256_t r;
+    uint64_t borrow = 0ULL;
+    for (size_t i = 0; i < 4; i++) {
+        uint64_t sub_amt = b.w[i] + borrow;
+        uint64_t next_borrow = ((sub_amt < b.w[i]) || (a.w[i] < sub_amt)) ? 1ULL : 0ULL;
+        r.w[i] = a.w[i] - sub_amt;
+        borrow = next_borrow;
+    }
+    return r;
+}
+
+static inline u256_t u256_shl1(u256_t a) {
+    u256_t r;
+    r.w[0] = (a.w[0] << 1);
+    r.w[1] = (a.w[1] << 1) | (a.w[0] >> 63);
+    r.w[2] = (a.w[2] << 1) | (a.w[1] >> 63);
+    r.w[3] = (a.w[3] << 1) | (a.w[2] >> 63);
+    return r;
+}
+
+static inline u256_t u256_shr1(u256_t a) {
+    u256_t r;
+    r.w[0] = (a.w[0] >> 1) | (a.w[1] << 63);
+    r.w[1] = (a.w[1] >> 1) | (a.w[2] << 63);
+    r.w[2] = (a.w[2] >> 1) | (a.w[3] << 63);
+    r.w[3] = (a.w[3] >> 1);
+    return r;
+}
+
+static inline u256_t u256_shl(u256_t a, uint32_t shift) {
+    u256_t r = u256_zero();
     uint32_t ws = shift / 64U;
     uint32_t bs = shift % 64U;
-    for (size_t i = 0; i < 5; i++) {
-        if (i + ws >= 5U) {
+    for (size_t i = 0; i < 4; i++) {
+        if (i + ws >= 4U) {
             continue;
         }
         r.w[i + ws] |= (a.w[i] << bs);
-        if (bs > 0U && i + ws + 1U < 5U) {
+        if (bs > 0U && i + ws + 1U < 4U) {
             r.w[i + ws + 1U] |= (a.w[i] >> (64U - bs));
         }
     }
     return r;
 }
 
-static int u320_cmp(u320_t a, u320_t b) {
-    for (size_t i = 5; i > 0; i--) {
+static inline u256_t u256_mul_u64(u256_t a, uint64_t m) {
+    u256_t r = u256_zero();
+    u128 carry = 0U;
+    for (size_t i = 0; i < 4; i++) {
+        u128 prod = (u128)a.w[i] * (u128)m + carry;
+        r.w[i] = (uint64_t)prod;
+        carry = prod >> 64;
+    }
+    return r;
+}
+
+static inline int u256_highest_bit(u256_t a) {
+    for (int i = 3; i >= 0; i--) {
+        if (a.w[i] != 0ULL) {
+            uint64_t v = a.w[i];
+            int b = 0;
+            while (v >>= 1) {
+                b++;
+            }
+            return i * 64 + b;
+        }
+    }
+    return -1;
+}
+
+static inline u256_t u256_mod(u256_t a, u256_t m) {
+    if (u256_is_zero(m)) {
+        return u256_zero();
+    }
+    if (u256_cmp(a, m) < 0) {
+        return a;
+    }
+    if ((a.w[2] | a.w[3] | m.w[2] | m.w[3]) == 0ULL) {
+        u128 a128 = ((u128)a.w[1] << 64) | (u128)a.w[0];
+        u128 m128 = ((u128)m.w[1] << 64) | (u128)m.w[0];
+        return u256_from_u128(a128 % m128);
+    }
+    int top = u256_highest_bit(a);
+    u256_t rem = u256_zero();
+    for (int bit = top; bit >= 0; bit--) {
+        uint32_t wi = (uint32_t)bit / 64U;
+        uint32_t bi = (uint32_t)bit % 64U;
+        uint64_t b = (a.w[wi] >> bi) & 1ULL;
+        bool carry = (rem.w[3] >> 63) != 0ULL;
+        rem = u256_shl1(rem);
+        rem.w[0] |= b;
+        if (carry || u256_cmp(rem, m) >= 0) {
+            rem = u256_sub(rem, m);
+        }
+    }
+    return rem;
+}
+
+/* Overflow-free (a + b) mod m for all 0 <= a, b < m <= 2^256 - 1. */
+static inline u256_t u256_add_mod(u256_t a, u256_t b, u256_t m) {
+    u256_t diff = u256_sub(m, b);
+    if (u256_cmp(a, diff) >= 0) {
+        return u256_sub(a, diff);
+    }
+    return u256_add(a, b);
+}
+
+/* Overflow-free (a * b) mod m for all m <= 2^256 - 1. */
+static inline u256_t u256_mul_mod(u256_t a, u256_t b, u256_t m) {
+    if (u256_cmp(m, u256_from_u64(1ULL)) <= 0) {
+        return u256_zero();
+    }
+    a = u256_mod(a, m);
+    b = u256_mod(b, m);
+    u256_t res = u256_zero();
+    while (!u256_is_zero(b)) {
+        if (b.w[0] & 1ULL) {
+            res = u256_add_mod(res, a, m);
+        }
+        b = u256_shr1(b);
+        if (!u256_is_zero(b)) {
+            a = u256_add_mod(a, a, m);
+        }
+    }
+    return res;
+}
+
+static inline long double u256_to_ld(u256_t v) {
+    if ((v.w[2] | v.w[3]) == 0ULL) {
+        return (long double)(((u128)v.w[1] << 64) | (u128)v.w[0]);
+    }
+    return ldexpl((long double)v.w[3], 192) +
+           ldexpl((long double)v.w[2], 128) +
+           ldexpl((long double)v.w[1], 64) +
+           (long double)v.w[0];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Exact 640-bit arithmetic for S_max bounds & hit recovery                   */
+/* -------------------------------------------------------------------------- */
+
+static u640_t u640_from_u256(u256_t v) {
+    u640_t r;
+    memset(&r, 0, sizeof(r));
+    for (size_t i = 0; i < 4; i++) {
+        r.w[i] = v.w[i];
+    }
+    return r;
+}
+
+static u640_t u640_mul_u64(u640_t a, uint64_t m) {
+    u640_t r;
+    memset(&r, 0, sizeof(r));
+    u128 carry = 0U;
+    for (size_t i = 0; i < 10; i++) {
+        u128 prod = (u128)a.w[i] * (u128)m + carry;
+        r.w[i] = (uint64_t)prod;
+        carry = prod >> 64;
+    }
+    return r;
+}
+
+static u640_t u640_mul_u256(u256_t a, u256_t b) {
+    u640_t r;
+    memset(&r, 0, sizeof(r));
+    for (size_t i = 0; i < 4; i++) {
+        u128 carry = 0U;
+        for (size_t j = 0; j < 4; j++) {
+            u128 prod = (u128)a.w[i] * (u128)b.w[j] + (u128)r.w[i + j] + carry;
+            r.w[i + j] = (uint64_t)prod;
+            carry = prod >> 64;
+        }
+        r.w[i + 4] = (uint64_t)carry;
+    }
+    return r;
+}
+
+static u640_t u640_add(u640_t a, u640_t b) {
+    u640_t r;
+    u128 carry = 0U;
+    for (size_t i = 0; i < 10; i++) {
+        u128 s = (u128)a.w[i] + (u128)b.w[i] + carry;
+        r.w[i] = (uint64_t)s;
+        carry = s >> 64;
+    }
+    return r;
+}
+
+static u640_t u640_shl(u640_t a, uint32_t shift) {
+    u640_t r;
+    memset(&r, 0, sizeof(r));
+    uint32_t ws = shift / 64U;
+    uint32_t bs = shift % 64U;
+    for (size_t i = 0; i < 10; i++) {
+        if (i + ws >= 10U) {
+            continue;
+        }
+        r.w[i + ws] |= (a.w[i] << bs);
+        if (bs > 0U && i + ws + 1U < 10U) {
+            r.w[i + ws + 1U] |= (a.w[i] >> (64U - bs));
+        }
+    }
+    return r;
+}
+
+static int u640_cmp(u640_t a, u640_t b) {
+    for (size_t i = 10; i > 0; i--) {
         if (a.w[i - 1] != b.w[i - 1]) {
             return (a.w[i - 1] > b.w[i - 1]) ? 1 : -1;
         }
@@ -188,19 +404,20 @@ static int u320_cmp(u320_t a, u320_t b) {
     return 0;
 }
 
-/* Exact u320 division by u128 D (1 <= D < 2^128), returning quotient and remainder. */
-static void u320_divmod_u128(u320_t num, u128 denom, u320_t *out_q, u128 *out_rem) {
-    u320_t q;
+/* Exact u640 division by u256 denom (1 <= denom < 2^256), returning quotient and remainder. */
+static void u640_divmod_u256(u640_t num, u256_t denom, u640_t *out_q, u256_t *out_rem) {
+    u640_t q;
     memset(&q, 0, sizeof(q));
-    u128 rem = 0U;
-    for (int bit = 319; bit >= 0; bit--) {
+    u256_t rem = u256_zero();
+    for (int bit = 639; bit >= 0; bit--) {
         uint32_t wi = (uint32_t)bit / 64U;
         uint32_t bi = (uint32_t)bit % 64U;
         uint64_t b = (num.w[wi] >> bi) & 1ULL;
-        /* rem = 2 * rem + b, checking for >= denom without u128 overflow (denom < 2^127). */
-        rem = (rem << 1) | (u128)b;
-        if (rem >= denom) {
-            rem -= denom;
+        bool carry = (rem.w[3] >> 63) != 0ULL;
+        rem = u256_shl1(rem);
+        rem.w[0] |= b;
+        if (carry || u256_cmp(rem, denom) >= 0) {
+            rem = u256_sub(rem, denom);
             q.w[wi] |= (1ULL << bi);
         }
     }
@@ -226,18 +443,33 @@ static void u128_to_str(u128 v, char *buf, size_t bufsz) {
     buf[out] = '\0';
 }
 
-static void u320_to_str(u320_t v, char *buf, size_t bufsz) {
-    if (v.w[2] == 0ULL && v.w[3] == 0ULL && v.w[4] == 0ULL) {
+static void u640_to_str(u640_t v, char *buf, size_t bufsz) {
+    bool is_u128 = true;
+    for (size_t i = 2; i < 10; i++) {
+        if (v.w[i] != 0ULL) {
+            is_u128 = false;
+            break;
+        }
+    }
+    if (is_u128) {
         u128_to_str(((u128)v.w[1] << 64) | (u128)v.w[0], buf, bufsz);
         return;
     }
-    char tmp[112];
+    char tmp[224];
     size_t pos = 0;
-    while ((v.w[0] | v.w[1] | v.w[2] | v.w[3] | v.w[4]) != 0ULL && pos < sizeof(tmp)) {
-        u320_t q;
-        u128 rem = 0U;
-        u320_divmod_u128(v, 10U, &q, &rem);
-        tmp[pos++] = (char)('0' + (unsigned)rem);
+    u256_t ten = u256_from_u64(10ULL);
+    while (pos < sizeof(tmp)) {
+        uint64_t any = 0ULL;
+        for (size_t i = 0; i < 10; i++) {
+            any |= v.w[i];
+        }
+        if (any == 0ULL) {
+            break;
+        }
+        u640_t q;
+        u256_t rem;
+        u640_divmod_u256(v, ten, &q, &rem);
+        tmp[pos++] = (char)('0' + (unsigned)rem.w[0]);
         v = q;
     }
     size_t out = 0;
@@ -247,18 +479,35 @@ static void u320_to_str(u320_t v, char *buf, size_t bufsz) {
     buf[out] = '\0';
 }
 
+static void u256_to_str(u256_t v, char *buf, size_t bufsz) {
+    u640_to_str(u640_from_u256(v), buf, bufsz);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Table precomputation & exact numerator verification                        */
+/* -------------------------------------------------------------------------- */
+
 static void init_tables(void) {
-    g_pow3[0] = 1U;
-    for (uint32_t i = 1; i <= MAX_K_LIMIT; i++) {
-        g_pow3[i] = g_pow3[i - 1] * 3U;
+    g_pow3_128[0] = 1U;
+    for (uint32_t i = 1; i <= MAX_K_U128; i++) {
+        g_pow3_128[i] = g_pow3_128[i - 1] * 3U;
     }
-    g_pow2[0] = 1U;
-    for (uint32_t i = 1; i <= MAX_S_LIMIT; i++) {
-        g_pow2[i] = g_pow2[i - 1] << 1;
+    g_pow2_128[0] = 1U;
+    for (uint32_t i = 1; i <= MAX_S_U128; i++) {
+        g_pow2_128[i] = g_pow2_128[i - 1] << 1;
     }
 
-    u320_t p10 = u320_from_u128(1U);
-    u320_t p3_big = u320_from_u128(1U);
+    g_pow3_256[0] = u256_from_u64(1ULL);
+    for (uint32_t i = 1; i <= MAX_K_LIMIT; i++) {
+        g_pow3_256[i] = u256_mul_u64(g_pow3_256[i - 1], 3ULL);
+    }
+    g_pow2_256[0] = u256_from_u64(1ULL);
+    for (uint32_t i = 1; i <= MAX_S_LIMIT; i++) {
+        g_pow2_256[i] = u256_shl1(g_pow2_256[i - 1]);
+    }
+
+    u640_t p10 = u640_from_u256(u256_from_u64(1ULL));
+    u640_t p3_big = u640_from_u256(u256_from_u64(1ULL));
     g_s_min[0] = 1U;
     g_s_max_eliahou[0] = 0U;
     for (uint32_t m = 1; m <= MAX_M; m++) {
@@ -266,20 +515,20 @@ static void init_tables(void) {
     }
 
     for (uint32_t k = 1; k <= MAX_K_LIMIT; k++) {
-        p10 = u320_mul_u64(p10, 10ULL);
-        p3_big = u320_mul_u64(p3_big, 3ULL);
+        p10 = u640_mul_u64(p10, 10ULL);
+        p3_big = u640_mul_u64(p3_big, 3ULL);
 
         uint32_t s_min = 0U;
-        while (s_min <= MAX_S_LIMIT && g_pow2[s_min] <= g_pow3[k]) {
+        while (s_min <= MAX_S_LIMIT && u256_cmp(g_pow2_256[s_min], g_pow3_256[k]) <= 0) {
             s_min++;
         }
         g_s_min[k] = s_min;
 
         /* Exact Eliahou bound: s == s_min OR 3^k * 2^s <= 10^k */
         uint32_t s_eliahou = s_min;
-        while (true) {
-            u320_t lhs = u320_shl(p3_big, s_eliahou + 1U);
-            if (u320_cmp(lhs, p10) <= 0) {
+        while (s_eliahou < 380U) {
+            u640_t lhs = u640_shl(p3_big, s_eliahou + 1U);
+            if (u640_cmp(lhs, p10) <= 0) {
                 s_eliahou++;
             } else {
                 break;
@@ -289,21 +538,21 @@ static void init_tables(void) {
 
         /* Exact Simons-de Weger m-circuit bound: 2^S * 3^m < 4^m * 3^k */
         for (uint32_t m = 1; m <= MAX_M; m++) {
-            u320_t rhs = u320_shl(p3_big, 2U * m); /* 4^m * 3^k */
-            uint32_t p3m = 1U;
+            u640_t rhs = u640_shl(p3_big, 2U * m); /* 4^m * 3^k */
+            uint64_t p3m = 1ULL;
             for (uint32_t r = 0; r < m; r++) {
-                p3m *= 3U;
+                p3m *= 3ULL;
             }
+            u640_t p3m_big = u640_from_u256(u256_from_u64(p3m));
             uint32_t s_sim = s_min;
-            /* Check if s_sim itself violates bound (empty range if so, e.g. k < m). */
-            u320_t lhs0 = u320_shl(u320_from_u128(p3m), s_sim);
-            if (u320_cmp(lhs0, rhs) >= 0) {
+            u640_t lhs0 = u640_shl(p3m_big, s_sim);
+            if (u640_cmp(lhs0, rhs) >= 0) {
                 g_s_max_simons[m][k] = s_min - 1U;
                 continue;
             }
-            while (true) {
-                u320_t nxt = u320_shl(u320_from_u128(p3m), s_sim + 1U);
-                if (u320_cmp(nxt, rhs) < 0) {
+            while (s_sim < 380U) {
+                u640_t nxt = u640_shl(p3m_big, s_sim + 1U);
+                if (u640_cmp(nxt, rhs) < 0) {
                     s_sim++;
                 } else {
                     break;
@@ -314,47 +563,52 @@ static void init_tables(void) {
     }
 }
 
-/* Exact closed-form m-circuit numerator C(v) in u320_t, used for self-test & hit recovery. */
-static u320_t exact_mcircuit_numerator(uint32_t m, const uint32_t *k_vec, const uint32_t *l_vec) {
+/* Exact closed-form m-circuit numerator C(v) in u640_t, used for self-test & hit recovery. */
+static u640_t exact_mcircuit_numerator(uint32_t m, const uint32_t *k_vec, const uint32_t *l_vec) {
     uint32_t K = 0U;
     for (uint32_t j = 0; j < m; j++) {
         K += k_vec[j];
     }
-    u320_t total;
+    u640_t total;
     memset(&total, 0, sizeof(total));
     uint32_t k_pref = 0U;
     uint32_t s_pref = 0U;
     for (uint32_t j = 0; j < m; j++) {
         k_pref += k_vec[j];
-        u128 term_factor = g_pow3[K - k_pref] * (g_pow3[k_vec[j]] - g_pow2[k_vec[j]]);
-        u320_t term = u320_shl(u320_from_u128(term_factor), s_pref);
-        total = u320_add(total, term);
+        u256_t diff_j = u256_sub(g_pow3_256[k_vec[j]], g_pow2_256[k_vec[j]]);
+        u640_t term_factor = u640_mul_u256(g_pow3_256[K - k_pref], diff_j);
+        u640_t term = u640_shl(term_factor, s_pref);
+        total = u640_add(total, term);
         s_pref += (k_vec[j] - 1U) + l_vec[j];
     }
     return total;
 }
 
 /* Direct step-by-step C(v) = sum_{i=0}^{K-1} 3^{K-1-i} * 2^{prefix_s_i} for self-test. */
-static u320_t step_by_step_numerator(uint32_t m, const uint32_t *k_vec, const uint32_t *l_vec) {
+static u640_t step_by_step_numerator(uint32_t m, const uint32_t *k_vec, const uint32_t *l_vec) {
     uint32_t K = 0U;
     for (uint32_t j = 0; j < m; j++) {
         K += k_vec[j];
     }
-    u320_t total;
+    u640_t total;
     memset(&total, 0, sizeof(total));
     uint32_t s_pref = 0U;
     uint32_t odd_idx = 0U;
     for (uint32_t j = 0; j < m; j++) {
         for (uint32_t r = 0; r < k_vec[j]; r++) {
             uint32_t exp_val = (r + 1U < k_vec[j]) ? 1U : l_vec[j];
-            u320_t term = u320_shl(u320_from_u128(g_pow3[K - 1U - odd_idx]), s_pref);
-            total = u320_add(total, term);
+            u640_t term = u640_shl(u640_from_u256(g_pow3_256[K - 1U - odd_idx]), s_pref);
+            total = u640_add(total, term);
             s_pref += exp_val;
             odd_idx++;
         }
     }
     return total;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Canonical rotation symmetry & deterministic ordering                       */
+/* -------------------------------------------------------------------------- */
 
 static inline int cmp_pair(uint32_t k_a, uint32_t l_a, uint32_t k_b, uint32_t l_b) {
     if (k_a != k_b) {
@@ -436,13 +690,72 @@ static int cmp_hit_qsort(const void *pa, const void *pb) {
     return 0;
 }
 
+static inline u256_t u256_from_ld_ceil(long double x) {
+    if (x <= 4.0L) {
+        return u256_from_u64(4ULL);
+    }
+    int exp2 = 0;
+    long double mant = frexpl(x, &exp2);
+    if (exp2 <= 63) {
+        return u256_from_u64((uint64_t)ceill(x));
+    }
+    if (exp2 > 255) {
+        u256_t maxv = {{UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX}};
+        return maxv;
+    }
+    uint64_t top63 = (uint64_t)ldexpl(mant, 63);
+    return u256_shl(u256_from_u64(top63 + 1ULL), (uint32_t)(exp2 - 63));
+}
+
+static inline u128 compute_near_thresh_u128(const worker_ctx_t *ctx, uint32_t m,
+                                             u128 denom, long double denom_ld) {
+    u128 half = denom >> 1;
+    if (ctx->near_count[m] < TOP_NEAR_PER_M) {
+        return half;
+    }
+    long double bound_ld = ctx->near_worst_dist[m] * denom_ld * (1.0L + 1e-12L) + 4.0L;
+    if (!isfinite((double)bound_ld) || bound_ld >= denom_ld * 0.5L) {
+        return half;
+    }
+    if (bound_ld <= 4.0L) {
+        return 4U;
+    }
+    int exp2 = 0;
+    long double mant = frexpl(bound_ld, &exp2);
+    if (exp2 <= 63) {
+        return (u128)((uint64_t)ceill(bound_ld));
+    }
+    if (exp2 >= 127) {
+        return half;
+    }
+    uint64_t top63 = (uint64_t)ldexpl(mant, 63);
+    u128 t = ((u128)(top63 + 1ULL)) << (uint32_t)(exp2 - 63);
+    return (t < half) ? t : half;
+}
+
+static inline u256_t compute_near_thresh_u256(const worker_ctx_t *ctx, uint32_t m,
+                                               u256_t denom, long double denom_ld) {
+    u256_t half = u256_shr1(denom);
+    if (ctx->near_count[m] < TOP_NEAR_PER_M) {
+        return half;
+    }
+    long double bound_ld = ctx->near_worst_dist[m] * denom_ld * (1.0L + 1e-12L) + 4.0L;
+    if (!isfinite((double)bound_ld) || bound_ld >= denom_ld * 0.5L) {
+        return half;
+    }
+    u256_t t = u256_from_ld_ceil(bound_ld);
+    return (u256_cmp(t, half) < 0) ? t : half;
+}
+
 static void record_near_miss(worker_ctx_t *ctx, uint32_t m, uint32_t k, uint32_t s,
-                             const uint32_t *kv, const uint32_t *lv, u128 denom, u128 rem) {
-    if (denom <= 1U || rem == 0U) {
+                             const uint32_t *kv, const uint32_t *lv,
+                             u256_t denom, u256_t rem) {
+    if (u256_cmp(denom, u256_from_u64(1ULL)) <= 0 || u256_is_zero(rem)) {
         return;
     }
-    u128 dist_num = (rem <= denom - rem) ? rem : (denom - rem);
-    long double dist_approx = (long double)dist_num / (long double)denom;
+    u256_t diff = u256_sub(denom, rem);
+    u256_t dist_num = (u256_cmp(rem, diff) <= 0) ? rem : diff;
+    long double dist_approx = u256_to_ld(dist_num) / u256_to_ld(denom);
 
     candidate_record_t cand;
     memset(&cand, 0, sizeof(cand));
@@ -462,33 +775,51 @@ static void record_near_miss(worker_ctx_t *ctx, uint32_t m, uint32_t k, uint32_t
     candidate_record_t *arr = ctx->near[m];
     if (cnt < TOP_NEAR_PER_M) {
         arr[cnt] = cand;
-        ctx->near_count[m] = cnt + 1U;
+        cnt++;
+        ctx->near_count[m] = cnt;
+        if (cnt == TOP_NEAR_PER_M) {
+            size_t wi = 0U;
+            for (size_t i = 1U; i < TOP_NEAR_PER_M; i++) {
+                if (cmp_near_record(&arr[i], &arr[wi]) > 0) {
+                    wi = i;
+                }
+            }
+            ctx->near_worst_idx[m] = wi;
+            ctx->near_worst_dist[m] = arr[wi].dist_approx;
+        }
         return;
     }
-    size_t worst_idx = 0U;
-    for (size_t i = 1U; i < TOP_NEAR_PER_M; i++) {
-        if (cmp_near_record(&arr[i], &arr[worst_idx]) > 0) {
-            worst_idx = i;
-        }
-    }
+    size_t worst_idx = ctx->near_worst_idx[m];
     if (cmp_near_record(&cand, &arr[worst_idx]) < 0) {
         arr[worst_idx] = cand;
+        size_t wi = 0U;
+        for (size_t i = 1U; i < TOP_NEAR_PER_M; i++) {
+            if (cmp_near_record(&arr[i], &arr[wi]) > 0) {
+                wi = i;
+            }
+        }
+        ctx->near_worst_idx[m] = wi;
+        ctx->near_worst_dist[m] = arr[wi].dist_approx;
     }
 }
 
 static void record_hit(worker_ctx_t *ctx, uint32_t m, uint32_t k, uint32_t s,
-                       const uint32_t *kv, const uint32_t *lv, u128 denom) {
-    u320_t c_exact = exact_mcircuit_numerator(m, kv, lv);
-    u320_t q;
-    u128 rem = 0U;
-    u320_divmod_u128(c_exact, denom, &q, &rem);
-    if (rem != 0U) {
-        /* Defensive cross-check: should never happen if modular check returned 0. */
+                       const uint32_t *kv, const uint32_t *lv, u256_t denom) {
+    u640_t c_exact = exact_mcircuit_numerator(m, kv, lv);
+    u640_t q;
+    u256_t rem;
+    u640_divmod_u256(c_exact, denom, &q, &rem);
+    if (!u256_is_zero(rem)) {
         return;
     }
-    u128 n_low = ((u128)q.w[1] << 64) | (u128)q.w[0];
-    bool is_triv = (q.w[2] == 0ULL && q.w[3] == 0ULL && q.w[4] == 0ULL &&
-                    (n_low == 1U || n_low == 2U || n_low == 4U));
+    bool high_zero = true;
+    for (size_t i = 1; i < 10; i++) {
+        if (q.w[i] != 0ULL) {
+            high_zero = false;
+            break;
+        }
+    }
+    bool is_triv = high_zero && (q.w[0] == 1ULL || q.w[0] == 2ULL || q.w[0] == 4ULL);
     if (ctx->hit_count < MAX_HITS_PER_WORKER) {
         hit_record_t *h = &ctx->hits[ctx->hit_count++];
         memset(h, 0, sizeof(*h));
@@ -505,310 +836,285 @@ static void record_hit(worker_ctx_t *ctx, uint32_t m, uint32_t k, uint32_t s,
     }
 }
 
-static void run_task_m2(worker_ctx_t *ctx, const work_task_t *t) {
-    uint32_t k = t->k;
-    uint32_t s = t->s;
-    uint32_t k0 = t->k0;
-    uint32_t k1 = k - k0;
-    uint32_t rem_l = s - k + 2U;
-    if (rem_l < 4U) {
-        return;
-    }
+/* -------------------------------------------------------------------------- */
+/* Instantiate u128 and u256 solvers from shared `mcircuit_solver_impl.h`     */
+/* -------------------------------------------------------------------------- */
 
-    u128 denom = g_pow2[s] - g_pow3[k];
-    u128 c0_mod = (g_pow3[k0] - g_pow2[k0]) % denom;
-    u128 c1_mod = (g_pow3[k1] - g_pow2[k1]) % denom;
-    u128 base0 = mul_mod128(g_pow3[k1] % denom, c0_mod, denom);
+#define MC_T u128
+#define MC_FN(x) x##_u128
+#define MC_POW3(k) g_pow3_128[k]
+#define MC_POW2(s) g_pow2_128[s]
+#define MC_ADD(a, b, m) add_mod128((a), (b), (m))
+#define MC_MUL(a, b, m) mul_mod128((a), (b), (m))
+#define MC_SUB(a, b) ((a) - (b))
+#define MC_MOD(a, m) ((a) % (m))
+#define MC_IS_ZERO(a) ((a) == 0U)
+#define MC_GT_ONE(a) ((a) > 1U)
+#define MC_TO_LD(a) ((long double)(a))
+#define MC_CMP(a, b) (((a) < (b)) ? -1 : (((a) > (b)) ? 1 : 0))
+#define MC_NEAR_THRESH(ctx, m, denom, denom_ld) compute_near_thresh_u128((ctx), (m), (denom), (denom_ld))
+#define MC_RECORD_HIT(ctx, m, k, s, kv, lv, denom) \
+    record_hit((ctx), (m), (k), (s), (kv), (lv), u256_from_u128(denom))
+#define MC_RECORD_NEAR(ctx, m, k, s, kv, lv, denom, rem) \
+    record_near_miss((ctx), (m), (k), (s), (kv), (lv), u256_from_u128(denom), u256_from_u128(rem))
+#include "mcircuit_solver_impl.h"
+#undef MC_T
+#undef MC_FN
+#undef MC_POW3
+#undef MC_POW2
+#undef MC_ADD
+#undef MC_MUL
+#undef MC_SUB
+#undef MC_MOD
+#undef MC_IS_ZERO
+#undef MC_GT_ONE
+#undef MC_TO_LD
+#undef MC_CMP
+#undef MC_NEAR_THRESH
+#undef MC_RECORD_HIT
+#undef MC_RECORD_NEAR
 
-    uint32_t l0_max = rem_l - 2U;
-    if (k0 == k1 && rem_l / 2U < l0_max) {
-        l0_max = rem_l / 2U;
-    }
-    if (l0_max < 2U) {
-        return;
-    }
-
-    uint32_t s0_start = (k0 - 1U) + 2U;
-    u128 p2_s0 = g_pow2[s0_start] % denom;
-    u128 term1 = mul_mod128(p2_s0, c1_mod, denom);
-
-    uint32_t kv[MAX_M] = {k0, k1, 0U, 0U};
-    uint32_t lv[MAX_M] = {0U, 0U, 0U, 0U};
-
-    for (uint32_t l0 = 2U; l0 <= l0_max; l0++) {
-        uint32_t l1 = rem_l - l0;
-        u128 rem = add_mod128(base0, term1, denom);
-        ctx->tested[2]++;
-        if (rem == 0U) {
-            lv[0] = l0;
-            lv[1] = l1;
-            record_hit(ctx, 2U, k, s, kv, lv, denom);
-        } else if (denom > 1U) {
-            lv[0] = l0;
-            lv[1] = l1;
-            record_near_miss(ctx, 2U, k, s, kv, lv, denom, rem);
-        }
-        term1 = add_mod128(term1, term1, denom);
-    }
-}
-
-static void run_task_m3(worker_ctx_t *ctx, const work_task_t *t) {
-    uint32_t k = t->k;
-    uint32_t s = t->s;
-    uint32_t k0 = t->k0;
-    uint32_t rem_l = s - k + 3U;
-    if (rem_l < 6U) {
-        return;
-    }
-
-    u128 denom = g_pow2[s] - g_pow3[k];
-    u128 c0_mod = (g_pow3[k0] - g_pow2[k0]) % denom;
-
-    uint32_t kv[MAX_M] = {k0, 0U, 0U, 0U};
-    uint32_t lv[MAX_M] = {0U, 0U, 0U, 0U};
-
-    for (uint32_t k1 = k0; k1 <= k - 2U * k0; k1++) {
-        uint32_t k2 = k - k0 - k1;
-        if (k2 < k0) {
-            continue;
-        }
-        kv[1] = k1;
-        kv[2] = k2;
-
-        u128 c1_mod = (g_pow3[k1] - g_pow2[k1]) % denom;
-        u128 c2_mod = (g_pow3[k2] - g_pow2[k2]) % denom;
-        u128 base0 = mul_mod128(g_pow3[k1 + k2] % denom, c0_mod, denom);
-        u128 p3_k2_c1 = mul_mod128(g_pow3[k2] % denom, c1_mod, denom);
-
-        uint32_t l0_max = rem_l - 4U;
-        for (uint32_t l0 = 2U; l0 <= l0_max; l0++) {
-            uint32_t s0 = (k0 - 1U) + l0;
-            u128 term1 = mul_mod128(g_pow2[s0] % denom, p3_k2_c1, denom);
-            u128 base1 = add_mod128(base0, term1, denom);
-
-            uint32_t l1_start = (k1 == k0) ? l0 : 2U;
-            uint32_t l1_max = rem_l - l0 - 2U;
-            if (l1_start > l1_max) {
-                continue;
-            }
-            uint32_t s01_start = s0 + (k1 - 1U) + l1_start;
-            u128 term2 = mul_mod128(g_pow2[s01_start] % denom, c2_mod, denom);
-
-            lv[0] = l0;
-            for (uint32_t l1 = l1_start; l1 <= l1_max; l1++) {
-                uint32_t l2 = rem_l - l0 - l1;
-                lv[1] = l1;
-                lv[2] = l2;
-                if (is_canonical_m(3U, kv, lv)) {
-                    u128 rem = add_mod128(base1, term2, denom);
-                    ctx->tested[3]++;
-                    if (rem == 0U) {
-                        record_hit(ctx, 3U, k, s, kv, lv, denom);
-                    } else if (denom > 1U) {
-                        record_near_miss(ctx, 3U, k, s, kv, lv, denom, rem);
-                    }
-                }
-                term2 = add_mod128(term2, term2, denom);
-            }
-        }
-    }
-}
-
-static void run_task_m4(worker_ctx_t *ctx, const work_task_t *t) {
-    uint32_t k = t->k;
-    uint32_t s = t->s;
-    uint32_t k0 = t->k0;
-    uint32_t k1 = t->k1;
-    uint32_t rem_l = s - k + 4U;
-    if (rem_l < 8U) {
-        return;
-    }
-
-    u128 denom = g_pow2[s] - g_pow3[k];
-    u128 c0_mod = (g_pow3[k0] - g_pow2[k0]) % denom;
-    u128 c1_mod = (g_pow3[k1] - g_pow2[k1]) % denom;
-
-    uint32_t kv[MAX_M] = {k0, k1, 0U, 0U};
-    uint32_t lv[MAX_M] = {0U, 0U, 0U, 0U};
-
-    for (uint32_t k2 = k0; k2 <= k - 2U * k0 - k1; k2++) {
-        uint32_t k3 = k - k0 - k1 - k2;
-        if (k3 < k0) {
-            continue;
-        }
-        kv[2] = k2;
-        kv[3] = k3;
-
-        u128 c2_mod = (g_pow3[k2] - g_pow2[k2]) % denom;
-        u128 c3_mod = (g_pow3[k3] - g_pow2[k3]) % denom;
-        u128 base0 = mul_mod128(g_pow3[k1 + k2 + k3] % denom, c0_mod, denom);
-        u128 p3_23_c1 = mul_mod128(g_pow3[k2 + k3] % denom, c1_mod, denom);
-        u128 p3_3_c2 = mul_mod128(g_pow3[k3] % denom, c2_mod, denom);
-
-        uint32_t l0_max = rem_l - 6U;
-        for (uint32_t l0 = 2U; l0 <= l0_max; l0++) {
-            uint32_t s0 = (k0 - 1U) + l0;
-            u128 term1 = mul_mod128(g_pow2[s0] % denom, p3_23_c1, denom);
-            u128 base1 = add_mod128(base0, term1, denom);
-
-            uint32_t l1_start = (k1 == k0) ? l0 : 2U;
-            uint32_t l1_max = rem_l - l0 - 4U;
-            if (l1_start > l1_max) {
-                continue;
-            }
-
-            uint32_t s01_start = s0 + (k1 - 1U) + l1_start;
-            u128 term2 = mul_mod128(g_pow2[s01_start] % denom, p3_3_c2, denom);
-
-            lv[0] = l0;
-            for (uint32_t l1 = l1_start; l1 <= l1_max; l1++) {
-                u128 base2 = add_mod128(base1, term2, denom);
-                uint32_t s01 = s0 + (k1 - 1U) + l1;
-
-                uint32_t l2_start = (k2 == k0) ? l0 : 2U;
-                uint32_t rem_23 = rem_l - l0 - l1;
-                uint32_t l2_max = (rem_23 >= 2U) ? (rem_23 - 2U) : 0U;
-                if (k3 == k0) {
-                    if (rem_23 < l0 + 2U) {
-                        l2_max = 0U;
-                    } else if (rem_23 - l0 < l2_max) {
-                        l2_max = rem_23 - l0;
-                    }
-                }
-                if (l2_start <= l2_max) {
-                    uint32_t s012_start = s01 + (k2 - 1U) + l2_start;
-                    u128 term3 = mul_mod128(g_pow2[s012_start] % denom, c3_mod, denom);
-                    lv[1] = l1;
-                    for (uint32_t l2 = l2_start; l2 <= l2_max; l2++) {
-                        uint32_t l3 = rem_l - l0 - l1 - l2;
-                        lv[2] = l2;
-                        lv[3] = l3;
-                        if (is_canonical_m(4U, kv, lv)) {
-                            u128 rem = add_mod128(base2, term3, denom);
-                            ctx->tested[4]++;
-                            if (rem == 0U) {
-                                record_hit(ctx, 4U, k, s, kv, lv, denom);
-                            } else if (denom > 1U) {
-                                record_near_miss(ctx, 4U, k, s, kv, lv, denom, rem);
-                            }
-                        }
-                        term3 = add_mod128(term3, term3, denom);
-                    }
-                }
-                term2 = add_mod128(term2, term2, denom);
-            }
-        }
-    }
-}
+#define MC_T u256_t
+#define MC_FN(x) x##_u256
+#define MC_POW3(k) g_pow3_256[k]
+#define MC_POW2(s) g_pow2_256[s]
+#define MC_ADD(a, b, m) u256_add_mod((a), (b), (m))
+#define MC_MUL(a, b, m) u256_mul_mod((a), (b), (m))
+#define MC_SUB(a, b) u256_sub((a), (b))
+#define MC_MOD(a, m) u256_mod((a), (m))
+#define MC_IS_ZERO(a) u256_is_zero(a)
+#define MC_GT_ONE(a) (u256_cmp((a), u256_from_u64(1ULL)) > 0)
+#define MC_TO_LD(a) u256_to_ld(a)
+#define MC_CMP(a, b) u256_cmp((a), (b))
+#define MC_NEAR_THRESH(ctx, m, denom, denom_ld) compute_near_thresh_u256((ctx), (m), (denom), (denom_ld))
+#define MC_RECORD_HIT(ctx, m, k, s, kv, lv, denom) \
+    record_hit((ctx), (m), (k), (s), (kv), (lv), (denom))
+#define MC_RECORD_NEAR(ctx, m, k, s, kv, lv, denom, rem) \
+    record_near_miss((ctx), (m), (k), (s), (kv), (lv), (denom), (rem))
+#include "mcircuit_solver_impl.h"
+#undef MC_T
+#undef MC_FN
+#undef MC_POW3
+#undef MC_POW2
+#undef MC_ADD
+#undef MC_MUL
+#undef MC_SUB
+#undef MC_MOD
+#undef MC_IS_ZERO
+#undef MC_GT_ONE
+#undef MC_TO_LD
+#undef MC_CMP
+#undef MC_NEAR_THRESH
+#undef MC_RECORD_HIT
+#undef MC_RECORD_NEAR
 
 static void *worker_entry(void *arg) {
     worker_ctx_t *ctx = (worker_ctx_t *)arg;
     for (size_t idx = ctx->thread_id; idx < ctx->task_count; idx += ctx->num_threads) {
         const work_task_t *t = &ctx->tasks[idx];
-        if (t->m == 2U) {
-            run_task_m2(ctx, t);
-        } else if (t->m == 3U) {
-            run_task_m3(ctx, t);
-        } else if (t->m == 4U) {
-            run_task_m4(ctx, t);
+        bool use_u256 = ctx->force_u256 || (t->k > MAX_K_U128) || (t->s > MAX_S_U128);
+        if (!use_u256) {
+            if (t->m == 2U) {
+                run_task_m2_u128(ctx, t);
+            } else if (t->m == 3U) {
+                run_task_m3_u128(ctx, t);
+            } else if (t->m == 4U) {
+                run_task_m4_u128(ctx, t);
+            } else if (t->m == 5U) {
+                run_task_m5_u128(ctx, t);
+            }
+        } else {
+            if (t->m == 2U) {
+                run_task_m2_u256(ctx, t);
+            } else if (t->m == 3U) {
+                run_task_m3_u256(ctx, t);
+            } else if (t->m == 4U) {
+                run_task_m4_u256(ctx, t);
+            } else if (t->m == 5U) {
+                run_task_m5_u256(ctx, t);
+            }
         }
     }
     return NULL;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Internal C11 self-tests                                                    */
+/* -------------------------------------------------------------------------- */
+
 static int run_self_test(void) {
     /* 1. add_mod128 and mul_mod128 near 2^127 boundary */
-    u128 big_m = ((u128)1 << 127) - 1U; /* 2^127 - 1 (Mersenne prime M_127) */
-    u128 a = big_m - 5U;
-    u128 b = big_m - 7U;
-    if (add_mod128(a, b, big_m) != big_m - 12U) {
-        fprintf(stderr, "FAIL: add_mod128 near 2^127-1\n");
-        return 1;
-    }
-    if (mul_mod128(a, b, big_m) != 35U) {
-        fprintf(stderr, "FAIL: mul_mod128 (-5)*(-7) mod (2^127-1)\n");
-        return 1;
+    {
+        u128 big_m = ((u128)1 << 127) - 1U;
+        u128 a = big_m - 5U;
+        u128 b = big_m - 7U;
+        if (add_mod128(a, b, big_m) != big_m - 12U) {
+            fprintf(stderr, "FAIL: add_mod128 near 2^127-1\n");
+            return 1;
+        }
+        if (mul_mod128(a, b, big_m) != 35U) {
+            fprintf(stderr, "FAIL: mul_mod128 (-5)*(-7) mod (2^127-1)\n");
+            return 1;
+        }
     }
 
-    /* 2. Closed-form m-circuit numerator identity vs step-by-step C(v) on m = 1, 2, 3, 4 */
+    /* 2. u256_add_mod and u256_mul_mod near 2^255-19 AND full 256-bit 2^256-189 */
     {
-        const uint32_t k1[1] = {5};
-        const uint32_t l1[1] = {4};
-        if (u320_cmp(exact_mcircuit_numerator(1, k1, l1), step_by_step_numerator(1, k1, l1)) != 0) {
+        u256_t p255 = {{UINT64_MAX - 18ULL, UINT64_MAX, UINT64_MAX, (1ULL << 63) - 1ULL}};
+        u256_t a = u256_sub(p255, u256_from_u64(11ULL));
+        u256_t b = u256_sub(p255, u256_from_u64(13ULL));
+        if (u256_cmp(u256_add_mod(a, b, p255), u256_sub(p255, u256_from_u64(24ULL))) != 0) {
+            fprintf(stderr, "FAIL: u256_add_mod near 2^255-19\n");
+            return 1;
+        }
+        if (u256_cmp(u256_mul_mod(a, b, p255), u256_from_u64(143ULL)) != 0) {
+            fprintf(stderr, "FAIL: u256_mul_mod (-11)*(-13) mod (2^255-19)\n");
+            return 1;
+        }
+
+        u256_t p256 = {{UINT64_MAX - 188ULL, UINT64_MAX, UINT64_MAX, UINT64_MAX}};
+        u256_t x = u256_sub(p256, u256_from_u64(9ULL));
+        u256_t y = u256_sub(p256, u256_from_u64(17ULL));
+        if (u256_cmp(u256_add_mod(x, y, p256), u256_sub(p256, u256_from_u64(26ULL))) != 0) {
+            fprintf(stderr, "FAIL: u256_add_mod near 2^256-189\n");
+            return 1;
+        }
+        if (u256_cmp(u256_mul_mod(x, y, p256), u256_from_u64(153ULL)) != 0) {
+            fprintf(stderr, "FAIL: u256_mul_mod (-9)*(-17) mod (2^256-189)\n");
+            return 1;
+        }
+    }
+
+    /* 3. Closed-form m-circuit numerator identity vs step-by-step C(v) on m = 1..5 */
+    {
+        const uint32_t k1[1] = {5}, l1[1] = {4};
+        if (u640_cmp(exact_mcircuit_numerator(1, k1, l1), step_by_step_numerator(1, k1, l1)) != 0) {
             fprintf(stderr, "FAIL: 1-circuit closed-form vs step-by-step\n");
             return 1;
         }
-        const uint32_t k2[2] = {4, 3};
-        const uint32_t l2[2] = {2, 4};
-        if (u320_cmp(exact_mcircuit_numerator(2, k2, l2), step_by_step_numerator(2, k2, l2)) != 0) {
+        const uint32_t k2[2] = {4, 3}, l2[2] = {2, 4};
+        if (u640_cmp(exact_mcircuit_numerator(2, k2, l2), step_by_step_numerator(2, k2, l2)) != 0) {
             fprintf(stderr, "FAIL: 2-circuit closed-form vs step-by-step\n");
             return 1;
         }
-        const uint32_t k3[3] = {2, 5, 3};
-        const uint32_t l3[3] = {3, 2, 4};
-        if (u320_cmp(exact_mcircuit_numerator(3, k3, l3), step_by_step_numerator(3, k3, l3)) != 0) {
+        const uint32_t k3[3] = {2, 5, 3}, l3[3] = {3, 2, 4};
+        if (u640_cmp(exact_mcircuit_numerator(3, k3, l3), step_by_step_numerator(3, k3, l3)) != 0) {
             fprintf(stderr, "FAIL: 3-circuit closed-form vs step-by-step\n");
             return 1;
         }
-        const uint32_t k4[4] = {1, 3, 2, 4};
-        const uint32_t l4[4] = {2, 5, 2, 3};
-        if (u320_cmp(exact_mcircuit_numerator(4, k4, l4), step_by_step_numerator(4, k4, l4)) != 0) {
+        const uint32_t k4[4] = {1, 3, 2, 4}, l4[4] = {2, 5, 2, 3};
+        if (u640_cmp(exact_mcircuit_numerator(4, k4, l4), step_by_step_numerator(4, k4, l4)) != 0) {
             fprintf(stderr, "FAIL: 4-circuit closed-form vs step-by-step\n");
             return 1;
         }
-    }
-
-    /* 3. Positive detection of trivial 1-circuit (k0=1, l0=2 -> K=1, S=2, D=1, n=1) */
-    {
-        const uint32_t kv[1] = {1};
-        const uint32_t lv[1] = {2};
-        u320_t c_val = exact_mcircuit_numerator(1U, kv, lv);
-        u128 denom = g_pow2[2] - g_pow3[1];
-        u320_t q;
-        u128 rem = 0U;
-        u320_divmod_u128(c_val, denom, &q, &rem);
-        if (rem != 0U || q.w[0] != 1ULL || q.w[1] != 0ULL) {
-            fprintf(stderr, "FAIL: trivial 1-circuit detection (expected n=1)\n");
+        const uint32_t k5[5] = {10, 22, 18, 25, 25}, l5[5] = {7, 15, 11, 16, 15};
+        if (u640_cmp(exact_mcircuit_numerator(5, k5, l5), step_by_step_numerator(5, k5, l5)) != 0) {
+            fprintf(stderr, "FAIL: 5-circuit K=100 closed-form vs step-by-step\n");
             return 1;
         }
     }
 
-    /* 4. Negative 3n+1 cycle detection: n = -17 is a 2-circuit (k=[4,3], l=[2,4], K=7, S=11) */
+    /* 4. Trivial 1-circuit (n=1) and negative 3n+1 2-circuit (n=-17) detection */
     {
-        const uint32_t kv[2] = {4, 3};
-        const uint32_t lv[2] = {2, 4};
-        u320_t c_val = exact_mcircuit_numerator(2U, kv, lv);
-        u128 abs_denom = g_pow3[7] - g_pow2[11]; /* 2187 - 2048 = 139 */
-        u320_t q;
-        u128 rem = 0U;
-        u320_divmod_u128(c_val, abs_denom, &q, &rem);
-        if (abs_denom != 139U || rem != 0U || q.w[0] != 17ULL || q.w[1] != 0ULL) {
+        const uint32_t kv1[1] = {1}, lv1[1] = {2};
+        u640_t c1 = exact_mcircuit_numerator(1U, kv1, lv1);
+        u256_t d1 = u256_sub(g_pow2_256[2], g_pow3_256[1]);
+        u640_t q1;
+        u256_t r1;
+        u640_divmod_u256(c1, d1, &q1, &r1);
+        if (!u256_is_zero(r1) || q1.w[0] != 1ULL || q1.w[1] != 0ULL) {
+            fprintf(stderr, "FAIL: trivial 1-circuit detection (expected n=1)\n");
+            return 1;
+        }
+
+        const uint32_t kv2[2] = {4, 3}, lv2[2] = {2, 4};
+        u640_t c2 = exact_mcircuit_numerator(2U, kv2, lv2);
+        u256_t d2 = u256_sub(g_pow3_256[7], g_pow2_256[11]); /* 2187 - 2048 = 139 */
+        u640_t q2;
+        u256_t r2;
+        u640_divmod_u256(c2, d2, &q2, &r2);
+        if (d2.w[0] != 139ULL || !u256_is_zero(r2) || q2.w[0] != 17ULL || q2.w[1] != 0ULL) {
             fprintf(stderr, "FAIL: negative 2-circuit -17 detection\n");
             return 1;
         }
     }
 
-    /* 5. High-K guard check: K=80, S=127 exact mod evaluation without UB */
+    /* 5. High-K checks: K=80/S=127 (u128), K=100/S=159 (u256), K=160/S=254 (u256) vs exact u640 */
     {
-        const uint32_t kv[2] = {40, 40};
-        const uint32_t lv[2] = {25, 24}; /* S = 39+25 + 39+24 = 127 */
-        u128 denom = g_pow2[127] - g_pow3[80];
-        u320_t c_val = exact_mcircuit_numerator(2U, kv, lv);
-        u320_t q;
-        u128 rem_exact = 0U;
-        u320_divmod_u128(c_val, denom, &q, &rem_exact);
+        const uint32_t kv80[2] = {40, 40}, lv80[2] = {25, 24};
+        u256_t d80_256 = u256_sub(g_pow2_256[127], g_pow3_256[80]);
+        u640_t c80 = exact_mcircuit_numerator(2U, kv80, lv80);
+        u640_t q80;
+        u256_t rem80_exact;
+        u640_divmod_u256(c80, d80_256, &q80, &rem80_exact);
 
-        u128 c0_mod = (g_pow3[40] - g_pow2[40]) % denom;
-        u128 t0 = mul_mod128(g_pow3[40] % denom, c0_mod, denom);
-        u128 t1 = mul_mod128(g_pow2[64] % denom, c0_mod, denom);
-        u128 rem_fast = add_mod128(t0, t1, denom);
-        if (rem_exact != rem_fast) {
-            fprintf(stderr, "FAIL: K=80, S=127 fast modular vs exact u320 mismatch\n");
+        u128 d80 = g_pow2_128[127] - g_pow3_128[80];
+        u128 c0_80 = (g_pow3_128[40] - g_pow2_128[40]) % d80;
+        u128 rem80_fast = add_mod128(mul_mod128(g_pow3_128[40] % d80, c0_80, d80),
+                                     mul_mod128(g_pow2_128[64] % d80, c0_80, d80), d80);
+        if (u256_cmp(rem80_exact, u256_from_u128(rem80_fast)) != 0) {
+            fprintf(stderr, "FAIL: K=80, S=127 u128 vs exact u640 mismatch\n");
+            return 1;
+        }
+
+        /* K=100, S=159, m=3: k=[30, 35, 35], l=[20, 21, 21] (S = 29+20 + 34+21 + 34+21 = 159) */
+        const uint32_t kv100[3] = {30, 35, 35}, lv100[3] = {20, 21, 21};
+        u256_t d100 = u256_sub(g_pow2_256[159], g_pow3_256[100]);
+        u640_t c100 = exact_mcircuit_numerator(3U, kv100, lv100);
+        u640_t q100;
+        u256_t rem100_exact;
+        u640_divmod_u256(c100, d100, &q100, &rem100_exact);
+        u256_t c100_0 = u256_mod(u256_sub(g_pow3_256[30], g_pow2_256[30]), d100);
+        u256_t c100_1 = u256_mod(u256_sub(g_pow3_256[35], g_pow2_256[35]), d100);
+        u256_t t0 = u256_mul_mod(u256_mod(g_pow3_256[70], d100), c100_0, d100);
+        u256_t t1 = u256_mul_mod(u256_mod(g_pow2_256[49], d100),
+                                 u256_mul_mod(u256_mod(g_pow3_256[35], d100), c100_1, d100), d100);
+        u256_t t2 = u256_mul_mod(u256_mod(g_pow2_256[104], d100), c100_1, d100);
+        u256_t rem100_fast = u256_add_mod(u256_add_mod(t0, t1, d100), t2, d100);
+        if (u256_cmp(rem100_exact, rem100_fast) != 0) {
+            fprintf(stderr, "FAIL: K=100, S=159 u256 vs exact u640 mismatch\n");
+            return 1;
+        }
+
+        /* K=160, S=254, m=2: k=[80, 80], l=[48, 48] (S = 79+48 + 79+48 = 254) */
+        const uint32_t kv160[2] = {80, 80}, lv160[2] = {48, 48};
+        u256_t d160 = u256_sub(g_pow2_256[254], g_pow3_256[160]);
+        u640_t c160 = exact_mcircuit_numerator(2U, kv160, lv160);
+        u640_t q160;
+        u256_t rem160_exact;
+        u640_divmod_u256(c160, d160, &q160, &rem160_exact);
+        u256_t c160_0 = u256_mod(u256_sub(g_pow3_256[80], g_pow2_256[80]), d160);
+        u256_t u0 = u256_mul_mod(u256_mod(g_pow3_256[80], d160), c160_0, d160);
+        u256_t u1 = u256_mul_mod(u256_mod(g_pow2_256[127], d160), c160_0, d160);
+        u256_t rem160_fast = u256_add_mod(u0, u1, d160);
+        if (u256_cmp(rem160_exact, rem160_fast) != 0) {
+            fprintf(stderr, "FAIL: K=160, S=254 u256 vs exact u640 mismatch\n");
             return 1;
         }
     }
 
-    printf("[OK] mcircuit_hunter C11 self-test: mod128, closed-form, n=1, n=-17, K=80/S=127 passed\n");
+    /* 6. Direct u128 vs u256 task-runner equivalence on m=5 (K=12, S=20) */
+    {
+        work_task_t task = {5U, 12U, 20U, 1U, 2U};
+        worker_ctx_t ctx128, ctx256;
+        memset(&ctx128, 0, sizeof(ctx128));
+        memset(&ctx256, 0, sizeof(ctx256));
+        run_task_m5_u128(&ctx128, &task);
+        run_task_m5_u256(&ctx256, &task);
+        if (ctx128.tested[5] == 0ULL || ctx128.tested[5] != ctx256.tested[5] ||
+            ctx128.near_count[5] != ctx256.near_count[5]) {
+            fprintf(stderr, "FAIL: m=5 u128 vs u256 count mismatch\n");
+            return 1;
+        }
+        for (size_t i = 0; i < ctx128.near_count[5]; i++) {
+            if (u256_cmp(ctx128.near[5][i].dist_num, ctx256.near[5][i].dist_num) != 0) {
+                fprintf(stderr, "FAIL: m=5 u128 vs u256 near-miss mismatch\n");
+                return 1;
+            }
+        }
+    }
+
+    printf("[OK] mcircuit_hunter C11 self-test: mod128, mod256, closed-form m=1..5, n=1/-17, K=80/100/160 passed\n");
     return 0;
 }
 
@@ -834,18 +1140,35 @@ static bool parse_u32(const char *s, uint32_t *out) {
     return true;
 }
 
+static bool push_task(work_task_t **tasks, size_t *count, size_t *cap, work_task_t item) {
+    if (*count == *cap) {
+        size_t new_cap = (*cap) * 2U;
+        work_task_t *tmp = realloc(*tasks, new_cap * sizeof(work_task_t));
+        if (!tmp) {
+            return false;
+        }
+        *tasks = tmp;
+        *cap = new_cap;
+    }
+    (*tasks)[(*count)++] = item;
+    return true;
+}
+
 int main(int argc, char **argv) {
     init_tables();
 
-    uint32_t k_max[MAX_M + 1] = {0, 0, 80, 79, 58};
-    uint32_t threads = 8U;
+    uint32_t k_max[MAX_M + 1] = {0, 0, 160, 100, 60, 38};
+    uint32_t threads = 4U;
     bound_mode_t bound_mode = BOUND_SIMONS;
     bool self_test = false;
+    bool force_u256 = false;
     const char *json_out = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--self-test") == 0) {
             self_test = true;
+        } else if (strcmp(argv[i], "--force-u256") == 0) {
+            force_u256 = true;
         } else if (strcmp(argv[i], "--k2-max") == 0 && i + 1 < argc) {
             if (!parse_u32(argv[++i], &k_max[2])) {
                 fprintf(stderr, "Invalid --k2-max\n");
@@ -859,6 +1182,11 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--k4-max") == 0 && i + 1 < argc) {
             if (!parse_u32(argv[++i], &k_max[4])) {
                 fprintf(stderr, "Invalid --k4-max\n");
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--k5-max") == 0 && i + 1 < argc) {
+            if (!parse_u32(argv[++i], &k_max[5])) {
+                fprintf(stderr, "Invalid --k5-max\n");
                 return 2;
             }
         } else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) {
@@ -880,8 +1208,9 @@ int main(int argc, char **argv) {
             json_out = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr,
-                    "Usage: %s [--self-test] [--k2-max K] [--k3-max K] [--k4-max K] "
-                    "[--bound simons|eliahou] [--threads N] [--json-out PATH|-]\n",
+                    "Usage: %s [--self-test] [--force-u256] [--k2-max K] [--k3-max K] "
+                    "[--k4-max K] [--k5-max K] [--bound simons|eliahou] [--threads N] "
+                    "[--json-out PATH|-]\n",
                     argv[0]);
             return 0;
         } else {
@@ -906,7 +1235,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    for (uint32_t m = 2U; m <= 4U; m++) {
+    for (uint32_t m = 2U; m <= MAX_M; m++) {
         uint32_t km = k_max[m];
         if (km < m) {
             continue;
@@ -932,30 +1261,20 @@ int main(int argc, char **argv) {
                 }
                 if (m == 2U || m == 3U) {
                     for (uint32_t k0 = 1U; k0 <= k / m; k0++) {
-                        if (task_count == task_cap) {
-                            task_cap *= 2U;
-                            work_task_t *tmp = realloc(tasks, task_cap * sizeof(work_task_t));
-                            if (!tmp) {
+                        if (!push_task(&tasks, &task_count, &task_cap,
+                                       (work_task_t){m, k, s, k0, 0U})) {
+                            free(tasks);
+                            return 1;
+                        }
+                    }
+                } else {
+                    for (uint32_t k0 = 1U; k0 <= k / m; k0++) {
+                        for (uint32_t k1 = k0; k1 <= k - (m - 1U) * k0; k1++) {
+                            if (!push_task(&tasks, &task_count, &task_cap,
+                                           (work_task_t){m, k, s, k0, k1})) {
                                 free(tasks);
                                 return 1;
                             }
-                            tasks = tmp;
-                        }
-                        tasks[task_count++] = (work_task_t){m, k, s, k0, 0U};
-                    }
-                } else {
-                    for (uint32_t k0 = 1U; k0 <= k / 4U; k0++) {
-                        for (uint32_t k1 = k0; k1 <= k - 3U * k0; k1++) {
-                            if (task_count == task_cap) {
-                                task_cap *= 2U;
-                                work_task_t *tmp = realloc(tasks, task_cap * sizeof(work_task_t));
-                                if (!tmp) {
-                                    free(tasks);
-                                    return 1;
-                                }
-                                tasks = tmp;
-                            }
-                            tasks[task_count++] = (work_task_t){4U, k, s, k0, k1};
                         }
                     }
                 }
@@ -982,22 +1301,35 @@ int main(int argc, char **argv) {
         ctxs[t].task_count = task_count;
         ctxs[t].thread_id = t;
         ctxs[t].num_threads = active_threads;
+        ctxs[t].force_u256 = force_u256;
     }
 
     if (active_threads == 1U) {
         worker_entry(&ctxs[0]);
     } else {
+        uint32_t spawned = 0U;
+        bool thread_err = false;
         for (uint32_t t = 0; t < active_threads; t++) {
-            if (pthread_create(&tids[t], NULL, worker_entry, &ctxs[t]) != 0) {
-                fprintf(stderr, "ERROR: pthread_create failed\n");
-                free(tasks);
-                free(ctxs);
-                free(tids);
-                return 1;
+            int rc = pthread_create(&tids[t], NULL, worker_entry, &ctxs[t]);
+            if (rc != 0) {
+                fprintf(stderr, "ERROR: pthread_create(%u) failed: %s\n", t, strerror(rc));
+                thread_err = true;
+                break;
+            }
+            spawned++;
+        }
+        for (uint32_t t = 0; t < spawned; t++) {
+            int rc = pthread_join(tids[t], NULL);
+            if (rc != 0) {
+                fprintf(stderr, "ERROR: pthread_join(%u) failed: %s\n", t, strerror(rc));
+                thread_err = true;
             }
         }
-        for (uint32_t t = 0; t < active_threads; t++) {
-            pthread_join(tids[t], NULL);
+        if (thread_err) {
+            free(tasks);
+            free(ctxs);
+            free(tids);
+            return 1;
         }
     }
 
@@ -1005,22 +1337,28 @@ int main(int argc, char **argv) {
     uint64_t total_tested_m[MAX_M + 1] = {0};
     uint64_t total_tested_all = 0ULL;
     uint64_t total_skips_all = 0ULL;
-    for (uint32_t m = 2U; m <= 4U; m++) {
+    for (uint32_t m = 2U; m <= MAX_M; m++) {
         total_skips_all += guard_skips[m];
     }
 
     size_t all_hits_cap = 0U;
     for (uint32_t t = 0; t < active_threads; t++) {
-        for (uint32_t m = 2U; m <= 4U; m++) {
+        for (uint32_t m = 2U; m <= MAX_M; m++) {
             total_tested_m[m] += ctxs[t].tested[m];
         }
         all_hits_cap += ctxs[t].hit_count;
     }
-    for (uint32_t m = 2U; m <= 4U; m++) {
+    for (uint32_t m = 2U; m <= MAX_M; m++) {
         total_tested_all += total_tested_m[m];
     }
 
     hit_record_t *all_hits = all_hits_cap ? malloc(all_hits_cap * sizeof(hit_record_t)) : NULL;
+    if (all_hits_cap && !all_hits) {
+        free(tasks);
+        free(ctxs);
+        free(tids);
+        return 1;
+    }
     size_t all_hits_count = 0U;
     for (uint32_t t = 0; t < active_threads; t++) {
         for (size_t i = 0; i < ctxs[t].hit_count; i++) {
@@ -1050,7 +1388,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    for (uint32_t m = 2U; m <= 4U; m++) {
+    for (uint32_t m = 2U; m <= MAX_M; m++) {
         size_t sc = 0U;
         for (uint32_t t = 0; t < active_threads; t++) {
             for (size_t i = 0; i < ctxs[t].near_count[m]; i++) {
@@ -1069,6 +1407,9 @@ int main(int argc, char **argv) {
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) + (double)(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+    if (!isfinite(elapsed) || elapsed < 0.0) {
+        elapsed = 0.0;
+    }
 
     FILE *fp = stdout;
     if (json_out && strcmp(json_out, "-") != 0) {
@@ -1087,16 +1428,18 @@ int main(int argc, char **argv) {
     const char *bound_name = (bound_mode == BOUND_ELIAHOU) ? "eliahou" : "simons";
     fprintf(fp, "{\n");
     fprintf(fp, "  \"canonical\": {\n");
-    fprintf(fp, "    \"schema\": \"solve-collatz-mcircuit-hunter/v1\",\n");
+    fprintf(fp, "    \"schema\": \"solve-collatz-mcircuit-hunter/v2\",\n");
     fprintf(fp, "    \"engine\": \"mcircuit_hunter.c\",\n");
     fprintf(fp, "    \"bound_mode\": \"%s\",\n", bound_name);
-    fprintf(fp, "    \"k_limit_u128\": %u,\n", MAX_K_LIMIT);
-    fprintf(fp, "    \"s_limit_u128\": %u,\n", MAX_S_LIMIT);
+    fprintf(fp, "    \"k_limit_u128\": %u,\n", MAX_K_U128);
+    fprintf(fp, "    \"s_limit_u128\": %u,\n", MAX_S_U128);
+    fprintf(fp, "    \"k_limit_u256\": %u,\n", MAX_K_LIMIT);
+    fprintf(fp, "    \"s_limit_u256\": %u,\n", MAX_S_LIMIT);
     fprintf(fp, "    \"overflow_guard_skips\": %" PRIu64 ",\n", total_skips_all);
     fprintf(fp, "    \"total_candidates_tested\": %" PRIu64 ",\n", total_tested_all);
     fprintf(fp, "    \"total_hits\": %zu,\n", nontrivial_hits);
     fprintf(fp, "    \"families\": [\n");
-    for (uint32_t m = 2U; m <= 4U; m++) {
+    for (uint32_t m = 2U; m <= MAX_M; m++) {
         uint32_t km = k_max[m];
         uint32_t kmin_eff = (km >= m) ? m : 0U;
         uint32_t kmax_eff = (km >= m) ? km : 0U;
@@ -1111,9 +1454,9 @@ int main(int argc, char **argv) {
         fprintf(fp, "        \"k_min\": %u,\n", kmin_eff);
         fprintf(fp, "        \"k_max\": %u,\n", kmax_eff);
         if (bound_mode == BOUND_ELIAHOU) {
-            fprintf(fp, "        \"s_rule\": \"S_min(K) <= S <= floor(K*log2(10/3)) via 3^K*2^S <= 10^K (S <= 127)\",\n");
+            fprintf(fp, "        \"s_rule\": \"S_min(K) <= S <= floor(K*log2(10/3)) via 3^K*2^S <= 10^K (S <= 255)\",\n");
         } else {
-            fprintf(fp, "        \"s_rule\": \"S_min(K) <= S < K*log2(3) + %u*log2(4/3) via 2^S*3^%u < 4^%u*3^K (S <= 127)\",\n", m, m, m);
+            fprintf(fp, "        \"s_rule\": \"S_min(K) <= S < K*log2(3) + %u*log2(4/3) via 2^S*3^%u < 4^%u*3^K (S <= 255)\",\n", m, m, m);
         }
         fprintf(fp, "        \"candidates_tested\": %" PRIu64 ",\n", total_tested_m[m]);
         fprintf(fp, "        \"overflow_guard_skips\": %" PRIu64 ",\n", guard_skips[m]);
@@ -1121,10 +1464,10 @@ int main(int argc, char **argv) {
         fprintf(fp, "        \"near_misses\": [\n");
         for (size_t i = 0; i < merged_near_count[m]; i++) {
             const candidate_record_t *nr = &merged_near[m][i];
-            char d_buf[64], r_buf[64], dn_buf[64];
-            u128_to_str(nr->denom, d_buf, sizeof(d_buf));
-            u128_to_str(nr->rem, r_buf, sizeof(r_buf));
-            u128_to_str(nr->dist_num, dn_buf, sizeof(dn_buf));
+            char d_buf[96], r_buf[96], dn_buf[96];
+            u256_to_str(nr->denom, d_buf, sizeof(d_buf));
+            u256_to_str(nr->rem, r_buf, sizeof(r_buf));
+            u256_to_str(nr->dist_num, dn_buf, sizeof(dn_buf));
             double da = isfinite((double)nr->dist_approx) ? (double)nr->dist_approx : 0.0;
             fprintf(fp, "          {\"m\": %u, \"k\": %u, \"s\": %u, \"k_vec\": ", nr->m, nr->k, nr->s);
             print_u32_vec(fp, nr->k_vec, nr->m);
@@ -1134,7 +1477,7 @@ int main(int argc, char **argv) {
                     d_buf, r_buf, dn_buf, da, (i + 1U < merged_near_count[m]) ? "," : "");
         }
         fprintf(fp, "        ]\n");
-        fprintf(fp, "      }%s\n", (m < 4U) ? "," : "");
+        fprintf(fp, "      }%s\n", (m < MAX_M) ? "," : "");
     }
     fprintf(fp, "    ],\n");
     fprintf(fp, "    \"hits\": [\n");
@@ -1144,9 +1487,9 @@ int main(int argc, char **argv) {
         if (h->is_trivial) {
             continue;
         }
-        char d_buf[64], n_buf[128];
-        u128_to_str(h->denom, d_buf, sizeof(d_buf));
-        u320_to_str(h->n_cand, n_buf, sizeof(n_buf));
+        char d_buf[96], n_buf[224];
+        u256_to_str(h->denom, d_buf, sizeof(d_buf));
+        u640_to_str(h->n_cand, n_buf, sizeof(n_buf));
         fprintf(fp, "%s      {\"m\": %u, \"k\": %u, \"s\": %u, \"k_vec\": ",
                 (printed_hits > 0U) ? ",\n" : "", h->m, h->k, h->s);
         print_u32_vec(fp, h->k_vec, h->m);
@@ -1162,6 +1505,7 @@ int main(int argc, char **argv) {
     fprintf(fp, "  },\n");
     fprintf(fp, "  \"telemetry\": {\n");
     fprintf(fp, "    \"threads\": %u,\n", active_threads);
+    fprintf(fp, "    \"force_u256\": %s,\n", force_u256 ? "true" : "false");
     fprintf(fp, "    \"elapsed_seconds\": %.6f\n", elapsed);
     fprintf(fp, "  }\n");
     fprintf(fp, "}\n");
