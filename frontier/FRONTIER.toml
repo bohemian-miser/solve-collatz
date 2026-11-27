@@ -42,9 +42,9 @@ barrier_notes = "Definitional bridge; expresses k odd steps as (3^k n + C(v)) / 
 [[node]]
 id = "CORE-004"
 track = "Core"
-status = "OPEN_SUBGOAL"
+status = "PROVED"
 title = "2-adic extension of the Syracuse map and periodic points in Z_2 (Barrier 4 witness)"
-target_file = "Collatz/Core/TwoAdic.lean"
+lean_file = "Collatz/Core/TwoAdic.lean"
 needs = ["CORE-003"]
 barrier_notes = "Formally exhibits non-trivial 2-adic periodic points to power review/barrier-check.md."
 
