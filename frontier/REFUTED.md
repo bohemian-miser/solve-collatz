@@ -177,3 +177,23 @@ Every entry must include:
   - `5`-circuit (`K = 44, S = 71`): `k_vec = [2, 7, 16, 16, 3]`, `l_vec = [10, 2, 4, 9, 7]`, `dist_approx = 5.190573340752e-12`
   - `6`-circuit (`K = 32, S = 52`): `k_vec = [2, 2, 8, 12, 3, 5]`, `l_vec = [4, 6, 5, 4, 3, 4]`, `dist_approx = 6.022192645138e-11`
 - **Takeaway:** Breaks the `K = 160 / S = 255` `u256_t` ceiling via `u512_t` (`K ≤ 256, S ≤ 511`) + `u1024_t` exact verification, pushes `2`-circuits to `K ≤ 240`, `3`-circuits to `K ≤ 120`, `4`-circuits to `K ≤ 70`, `5`-circuits to `K ≤ 44`, and introduces exhaustive canonical `6`-circuit elimination up to `K ≤ 32` (`9.226B` total candidates, `5.21×` `REF-009` volume, `0` skips, `0` hits), with `SolveCollatz.Disprove.NontrivialCycleCert` schema verified across `m = 1..6`. Further reach (`m ≥ 7` or higher `K`) requires LLL/lattice reduction or GPU acceleration.
+
+### `REF-012` — Ten-billion-scale Track B Phase 5 divergence, cycle, or infinite stopping-time anomaly in `1 ≤ n ≤ 10¹⁰` and `12` structured high-glide lift families (`k ≤ 2000`)
+- **Claim:** There exists a positive integer `1 ≤ n ≤ 10¹⁰` or a structured seed in the `12` high-glide families — Mersenne lifts `2^k·{1,3,27} - 1`, extended lifts `2^k·{5,7,9} - 1`, `2^k + 1`, `2^k - 3` (`k ≥ 2`), and Terras/Roosendaal record-glide lifts `2^k·{703,9663,77671,319804831} - 1` — for `1 ≤ k ≤ 2000` (`23,999` seeds) that fails to drop strictly below `n` (or diverges / enters a non-trivial cycle).
+- **Status:** `REFUTED` (exhaustively verified empty: `0` counterexamples across `10¹⁰` integers + `23,999` structured seeds up to `k = 2000`, `0` silent overflows; `overflow_count = 0`; `u128_bigint_fallbacks = 23,048`; `deterministic_sha256 = f8f8d7943805eadb5f0175bc46c12c6f91d6415c030dd4e4b2a0ca2694c1251f`; full log at `search/logs/glide_sweep_1e10_ref012.json`).
+- **Witness / Reproducer:**
+  ```bash
+  taskset -c 116-119 python3 search/glide_hunter/run_glide_hunter.py --range-end 10000000000 --mersenne-max 2000 --sieve-bits 24 --threads 4 --log-json search/logs/glide_sweep_1e10_ref012.json
+  ```
+- **Sieve & Arithmetic Audit:**
+  - Upgraded to `uint64_t → __uint128_t → bigint_t` 3-tier exact arithmetic (`0` silent overflows) + mod-$2^{24}$ (`16,777,216`) affine drop sieve covering `16,490,635 / 16,777,216` residues (`98.2918%`, `9,812,693,796` fast-skips in `1..10¹⁰`, max pre-drop steps `39`, max threshold `n_min = 24`, max pre-drop ratio `< 876`) with direct `g_uncovered[]` (`286,581` residues = `1.7082%`) jump traversal for `n ≥ max(tau_cap, 2^B)` (`4.547942s` Mode 1 / `2,198,796,632 seeds/s`, `0.793161s` parallel Mode 2, `6.307s` total wall time on `4` pinned cores `116–119`).
+  - Cross-verified `--sieve-bits 0` (brute force) ≡ `24` bit-identically on `1..20,000,000` (crossing `2²⁴`), `--sieve-bits 0 ≡ 16 ≡ 18 ≡ 20 ≡ 22 ≡ 24` on `1..1,200,000`, Phase B (`300M > TAU_CACHE_CAP`) `1t ≡ 4t` and `--sieve-bits 20 ≡ 24`, `1t ≡ 4t ≡ ASan+UBSan` bit-identical `deterministic_sha256` on `1..2,000,000 + k ≤ 200` (`05b6af9d95d8df69`) and CI `--self-test` (`2ff777514f64dad2`, `0` sanitizer errors), strict RFC-8259 JSON via `scripts/native_cache.py`, and independent pure-Python `int` verification of all `100` unique Mode 1 record seeds, all `264` Mode 2 sample orbits, and all `3` Mode 2 global champions.
+- **Verified Record Summary (`1 ≤ n ≤ 10¹⁰`):**
+  | Record Type | Peak Seed `n` | Stopping Time `σ(n)` | Total Steps `τ(n)` | Peak Value | Peak Ratio `peak/n` |
+  |---|---:|---:|---:|---:|---:|
+  | Max Stopping Time (`1 ≤ n ≤ 10¹⁰`) | `2,788,008,987` | `729` | `944` | `81,887,769,175,732` | `29,371.42×` |
+  | Intermediate Stopping-Time Record | `1,827,397,567` | `706` | `928` | `118,736,698,851,769,012` | `64,975,843.79×` |
+  | Max Peak Ratio (`1 ≤ n ≤ 10¹⁰`) | `1,410,123,943` | `590` | `770` | `7,125,885,122,794,452,160` | `5,053,375,030.02×` |
+  | Max Total Steps (`n ≤ 249,999,999` [`tau_exact_up_to`]) | `226,588,897` | `3` | `956` | `966,616,035,460` | `4,265.95×` |
+- **Structured High-Glide Stress Families (`1 ≤ k ≤ 2000`, `23,999` seeds across 12 families):** All `2^k·{1,3,5,7,9,27,703,9663,77671,319804831} - 1`, `2^k + 1`, and `2^k - 3` (`k ≥ 2`) converge to `1` (`max σ = 13,711` at `7·2^{1900}-1`, `max τ = 28,128` at `5·2^{1994}-1`, `max log2_glide_ratio = 1175.398689` at `3·2^{2000}-1`, global `max_peak_bits = 3,201` attained at `319,804,831·2^{2000}-1`).
+- **Takeaway:** Extends exhaustive Collatz stopping-time & peak-glide verification by `2×` over `REF-010` (`10×` over `REF-008`) to `10¹⁰` (`2.199B seeds/s` on 4 pinned cores via mod-$2^{24}$ uncovered-residue jump sieve + 3-tier `u64/u128/bigint_t` arithmetic) and `23,999` structured lifts up to `k ≤ 2000` (`3,201`-bit peaks, `0` overflows).
