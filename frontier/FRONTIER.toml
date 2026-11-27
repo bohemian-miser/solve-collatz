@@ -69,11 +69,11 @@ barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for
 [[node]]
 id = "KNOWN-003"
 track = "Known"
-status = "OPEN_SUBGOAL"
+status = "IN_PROGRESS"
 title = "Eliahou (1993) / Simons-de Weger (2005) cycle-length lower bounds via Baker/continued fractions"
-target_file = "Collatz/Known/CycleLengthBounds.lean"
+lean_file = "Collatz/Known/CycleLengthBounds.lean"
 needs = ["KNOWN-002"]
-barrier_notes = "Narrows both Track A (cycle elimination) and Track B (prunes cycle search space)."
+barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fails on 3n-1, 5n+1, Z_<0, Z_2). Proved: minimal-element SyracuseCycle <-> HasNontrivialCycle bridge, exact Eliahou product identity, two-sided bounds 3^k < 2^S and 2^S M^k < (3M+1)^k, linear gap bounds, and kernel-verified elimination for M=1000 (k >= 41, len >= 106) and M=10^6 (k >= 1001, len >= 2588). Open: in-kernel finite-stopping-time verification up to 2^68 to lift the lower bound to Eliahou's 17,087,915 (fixed-m-circuit Simons-de Weger / Baker reductions belong in PROVE-B1)."
 
 [[node]]
 id = "KNOWN-004"
