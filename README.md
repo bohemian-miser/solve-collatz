@@ -4,7 +4,7 @@
 
 An open-source, Lean 4 kernel-verified **dual-track research swarm** for the Collatz ($3n+1$) conjecture — designed for humans and autonomous AI agent fleets to collaborate in parallel on **both** directions simultaneously:
 
-- **Track A (`Collatz/Prove/`):** Proving the conjecture (`CollatzConjecture`), standing on formalized modern literature (`Collatz/Known/`: Terras, Krasikov–Lagarias, Simons–de Weger, Tao's Syracuse transfer-operator framework).
+- **Track A (`Collatz/Prove/`):** Proving the conjecture (`CollatzConjecture`), standing on formalized modern literature (`Collatz/Known/`: Terras, Korec, Eliahou-method and finite-range Steiner/Simons cycle bounds, the Tao 2022 statement; see `docs/MAP.md`).
 - **Track B (`Collatz/Disprove/` + `search/`):** Hunting for a counterexample (`¬ CollatzConjecture` via a non-trivial positive cycle or a divergent orbit) using high-speed search engines whose hits compile into **100% Lean-kernel-verified certificates** (`NontrivialCycleCert`).
 
 ---
@@ -24,8 +24,8 @@ An open-source, Lean 4 kernel-verified **dual-track research swarm** for the Col
 |---|---|
 | `Challenge.lean` | **FROZEN** canonical statements (`CollatzConjecture`, `CollatzDisproof`). CI blocks any PR modifying it. |
 | `Collatz/Core/` | Shared definitions (`collatzStep`, `syracuseStep`, `ReachesOne`, `HasNontrivialCycle`, `Diverges`) + formalized barrier counterexamples (`GeneralMaps.lean`: `3n-1`, `5n+1`, `ℤ_{<0}`). |
-| `Collatz/Known/` | Phase 1: Formalized known literature (Terras stopping times, Krasikov–Lagarias, Simons–de Weger cycle bounds, Tao 2022 bridge). |
-| `Collatz/Prove/` | Track A (TRUE): Competing proof attack trees (Ergodic/Transfer Operator, Diophantine/Cycles, Automata/Covering Sieves, Descent). |
+| `Collatz/Known/` | Phase 1: Formalized known literature (Terras density, Eliahou-method cycle-length bounds from a kernel-checked range, finite-range Steiner/Simons bounds, Tao 2022 statement); see `docs/MAP.md`. |
+| `Collatz/Prove/` | Track A (TRUE): Competing proof attack trees (Ergodic/density, Diophantine/Cycles, Automata/Covering Sieves, Descent). |
 | `Collatz/Disprove/` | Track B (FALSE): Formal Lean counterexample certificate verifiers (`Cert.lean`) & obstruction theorems. |
 | `search/` | High-speed non-Lean search & automated red-team tools (`barrier_redteam.py`, `cycle_hunter.py`). |
 | `frontier/` | Living machine-readable Research DAG (`FRONTIER.toml`), `REFUTED.md`, and `BARRIERS.md`. |

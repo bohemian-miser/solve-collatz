@@ -61,7 +61,7 @@ barrier_notes = "PR1 (Collatz/Known/TerrasParity.lean) proves the exact mod-2^k 
 id = "KNOWN-002"
 track = "Known"
 status = "IN_PROGRESS"
-title = "Steiner (1977) circuit theorem: no non-trivial 1-cycle (up-then-down cycle)"
+title = "Steiner 1-cycles: none with k <= 10,781,273 odd steps (full theorem conditional on hBaker)"
 lean_file = "Collatz/Known/SteinerCircuit.lean, Collatz/Known/SteinerConvergents.lean"
 needs = ["CORE-003"]
 barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for 3n-1, 5n+1, Z_<0, Z_2). Phase 1 (SteinerCircuit.lean): exact 1-circuit numerator & cycle equations, cycle_hunter divisibility equivalence, gap bound & S = min_s(k) uniqueness, kernel elimination for 1 <= k <= 20, and conditional Steiner reduction. Phase 2 (SteinerConvergents.lean): pure-Nat Steiner-Legendre convergent exclusion theorem using log_2(3) CF convergents (p_13, q_13) = (301994, 190537) and (p_14, q_14) = (16785921, 10590737), eliminating ALL non-trivial 1-circuits for 1 <= k <= 10781273 (539,063x leap over k <= 20), proving unconditional 10781274 <= k, 17087915 <= S, 27869189 <= k + S bridged to Challenge.lean, sharpened conditional reduction for k > 10781273, and Barrier 1-5 separations. Open: Baker/Rhin lower bound 2^S <= 2^k * (2^S - 3^k) for k > 10781273."
@@ -70,7 +70,7 @@ barrier_notes = "Uses positivity + rational approximation of log_2(3) (fails for
 id = "KNOWN-003"
 track = "Known"
 status = "IN_PROGRESS"
-title = "Eliahou (1993) / Simons-de Weger (2005) cycle-length lower bounds via Baker/continued fractions"
+title = "Eliahou-method cycle-length bound from kernel-checked range 2^22 (length >= 19,700)"
 lean_file = "Collatz/Known/CycleLengthBounds.lean, Collatz/Known/EliahouConvergents.lean, Collatz/Known/EliahouLifted.lean, Collatz/Known/EliahouLifted22.lean"
 needs = ["KNOWN-002", "PROVE-C1"]
 barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fails on 3n-1, 5n+1, Z_<0, Z_2). Phase 1 (CycleLengthBounds.lean): minimal-element SyracuseCycle <-> HasNontrivialCycle bridge, exact Eliahou product identity, two-sided bounds 3^k < 2^S and 2^S M^k < (3M+1)^k, linear gap bounds, and kernel elimination for M=1000 (k >= 41, len >= 106) and M=10^6 (k >= 1001, len >= 2588). Phase 2 (EliahouConvergents.lean): unconditional mod-4096 lifted kernel stopping-time verification for all 2 <= n < 32768 (1582 uncovered checks <= 105 steps) forcing 32768 <= n_min, exact log_2(3) continued-fraction convergents & Farey determinant/separation theory, UNCONDITIONAL cycle-length lower bounds K >= 306, S >= 485, K + S >= 791 (zero external hypotheses, bridged to HasNontrivialCycle), sharp conditional CF lifting M=10^6 (K >= 2966, len >= 7667), M=10^7 (K >= 10946, len >= 28295), and M=3*10^8 (K >= 16266, len >= 42048), plus Barrier 1-5 separations. Phase 3 (EliahouLifted.lean): kernel-fast 2-step unrolled chained Terras descent (dropChunk2Step/dropChunk3) + dyadic modular descent tree (checkShellD) across 8 balanced mod-256 buckets certifying HasFiniteStoppingTime for all 2 <= n < 2^20 = 1048576 (zero native_decide), lifting UNCONDITIONAL bounds (ZERO hypotheses) to 1048576 <= n_min, K >= 2966, S >= 4701, K + S >= 7667 bridged to Challenge.HasNontrivialCycle, plus Barrier 1-5 separations. Phase 4 (EliahouLifted22.lean): 4-step affine table (step4) + 8-step chained descent (drop4x2) + split dyadic modular descent tree (checkTop/checkMid) across 8 balanced mod-4096 buckets reusing EliahouLifted for < 2^20 and certifying [2^20, 2^22) purely in kernel (by decide, zero native_decide) for all 2 <= n < 2^22 = 4194304, lifting UNCONDITIONAL bounds (ZERO hypotheses) to 4194304 <= n_min, K >= 7621, S >= 12079, K + S >= 19700 (2.57x leap over 2^20) via Eliahou CF semiconvergent chain (11025/6956) bridged to Challenge.HasNontrivialCycle, plus Barrier 1-5 separations. Open: in-kernel finite-stopping-time verification up to 2^68 to lift the unconditional lower bound to Eliahou's 17,087,915."
@@ -79,7 +79,7 @@ barrier_notes = "Uses global integrality + archimedean positivity 1 < n_min (fai
 id = "KNOWN-004"
 track = "Known"
 status = "IN_PROGRESS"
-title = "Bridge to Terence Tao (2022) almost-all almost-bounded orbits (logarithmic density & Tauberian interface)"
+title = "Tao (2022) statement and conditional bridge (assumes the Syracuse form; nothing of Tao proved)"
 lean_file = "Collatz/Known/TaoBridge.lean, Collatz/Known/TaoQuantitativeLogDensity.lean"
 needs = ["CORE-003", "KNOWN-001"]
 barrier_notes = "Phase 1 (TaoBridge.lean): OrbitMinLe/EventuallyBelow/CollatzReachesOne compatibility with Challenge.lean, Syracuse.lean, and TerrasDensity.lean; exact N!-scaled logarithmic density HasLogDensityOne; pure-Nat Abel summation & Tauberian theorem (hasLogDensityOne_of_hasNaturalDensityOne) yielding unconditional terras_log_density_one; exact Syracuse offset upper bound and drift contraction interface (TaoSyracuseDriftHypothesis -> TaoAlmostBoundedConjecture -> HasLogDensityOne HasFiniteStoppingTime / bitLen); and Barrier 4 / PROVE-A1 zero-density separation. Phase 2 (TaoQuantitativeLogDensity.lean, pure Lean 4 core): pure-Nat dyadic harmonic bounds (H_log(2^m) >= (m/2)*(2^m)!, bitLen N * N! <= 2*H_log(N), H_log(N) <= bitLen N * N!); equivalence HasQuantitativeLogDensityOne P <-> HasConvergentReciprocalExceptions P (O(1/log N) <-> sum_{~P n} 1/n < inf); General Quantitative Transfer Theorem (HasPowerSavingDensityOne P p q -> HasConvergentReciprocalExceptions P for p < q); unconditional instantiation via SharperChernoff.sharper_power_saving_density_19_20 proving sum_{~HasFiniteStoppingTime n} 1/n < inf and O(1/log N) logarithmic density (plus explicit 20/21 constant bound <= 2^42063 + 2^21); multi-scale iterated descent (orbitMinLe_iterated_composition) and o(1) vs power-saving separation (tao_almost_bounded_implies_convergent_bad_orbits_check via SparseSqBlocks); and explicit Barrier 1-5 separations (3n-1, 5n+1, Z_<0, Z_2 + Mersenne sum 1/(2^k-1) <= 2, and convergent_reciprocal_allows_cycle). Open: Tao's (2022) full Fourier-renewal / 2-adic random-walk proof of TaoSyracuseDriftHypothesis / TaoAlmostBoundedConjecture."
@@ -98,7 +98,7 @@ barrier_notes = "Proved (pure Lean 4 core, zero Mathlib): Phase 1 (ExceptionalDe
 id = "PROVE-B1"
 track = "Prove"
 status = "IN_PROGRESS"
-title = "Track A (Diophantine): k-cycle / m-circuit non-existence via linear forms in logarithms & p-adic heights"
+title = "m-circuit cycle-length lower bounds (non-existence conditional on hBaker)"
 lean_file = "Collatz/Prove/Diophantine/TwoCircuit.lean, Collatz/Prove/Diophantine/ThreeCircuit.lean, Collatz/Prove/Diophantine/MCircuit.lean, Collatz/Prove/Diophantine/TwoCircuitConvergents.lean, Collatz/Prove/Diophantine/MCircuitLifted.lean"
 target_file = "Collatz/Prove/Diophantine/"
 needs = ["KNOWN-003"]
@@ -131,3 +131,136 @@ title = "Track B (Divergent / Glide Hunter): high-throughput C11/sieve search fo
 target_file = "search/glide_hunter/"
 needs = ["DISPROVE-001"]
 barrier_notes = "Produces verifiable computational certificates & stress-test orbits for barrier_redteam.py. Phase 1 (REF-005): 1<=n<=10^8 + 2^k*{1,3,27}-1 (k<=120). Phase 2 (REF-006): 1<=n<=5e8 + k<=500. Phase 3 (REF-008): upgraded mod-2^18 affine sieve (97.1409% coverage, 32 KiB L1 bitset, 794M seeds/s on 8 cores), verified 1<=n<=10^9 + 7,000 structured seeds across 2^k*{1,3,27}-1 and Terras/Roosendaal lifts 2^k*{703,9663,77671,319804831}-1 up to k<=1000 (1,617-bit peaks, 0 overflows, explicit --max-steps Lean NontrivialCycleCert/divergence diagnostics). Phase 4 (REF-010): adopted scripts/native_cache.py in both C11 wrappers, upgraded to mod-2^20 affine sieve with u128 construction (1,021,248 / 1,048,576 = 97.3938% coverage, 128 KiB L2 bitset, 1.228B seeds/s on 8 pinned cores), and verified 1<=n<=5e9 + 10,500 structured seeds up to k<=1500 (2,408-bit peaks, 0 overflows; reproducible log search/logs/glide_sweep_5e9_ref010.json). Phase 5 (REF-012): upgraded to 3-tier u64/u128/bigint_t exact arithmetic + mod-2^24 affine sieve (16,490,635 / 16,777,216 = 98.2918% coverage) with uncovered-residue jump traversal (2.199B seeds/s on 4 pinned cores) + parallel Mode 2, exhaustively verifying 1<=n<=10^10 + 23,999 structured seeds across 12 families (2^k*{1,3,5,7,9,27,703,9663,77671,319804831}-1, 2^k+1, 2^k-3) up to k<=2000 (3,201-bit peaks, 0 overflows; reproducible log search/logs/glide_sweep_1e10_ref012.json)."
+
+[[node]]
+id = "CLEAN-001"
+track = "Core"
+status = "OPEN_SUBGOAL"
+title = "Relabel or remove the 48 barrier* theorems (they combine other-map cycles with numeric facts and separate no argument)"
+needs = []
+
+[[node]]
+id = "CLEAN-002"
+track = "Core"
+status = "OPEN_SUBGOAL"
+title = "Check every dagger-marked figure in docs/MAP.md against the original paper and cite page or theorem number"
+needs = []
+
+[[node]]
+id = "RANGE-001"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D1.1 Stopping-time certificate format and kernel checker; reproduce the 2^22 range from a certificate"
+needs = ["KNOWN-003", "PROVE-C1"]
+
+[[node]]
+id = "RANGE-002"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D1.2 Kernel-checked verified range 2^28, then 2^32, via RANGE-001 certificates"
+needs = ["RANGE-001"]
+
+[[node]]
+id = "RANGE-003"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D1.3 Generic theorem: verified range B implies cycle-length bound L(B) via log2(3) convergents"
+needs = ["KNOWN-003"]
+
+[[node]]
+id = "RANGE-004"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D1.3 Eliahou (1993): with range 2^40, every non-trivial cycle has length >= 17,087,915"
+needs = ["RANGE-002", "RANGE-003"]
+
+[[node]]
+id = "RANGE-005"
+track = "Search"
+status = "OPEN_SUBGOAL"
+title = "D1.4 Measure whether Angeltveit (arXiv:2602.10466) yields smaller range certificates"
+needs = ["RANGE-001"]
+
+[[node]]
+id = "DIOPH-001"
+track = "Prove"
+status = "OPEN_SUBGOAL"
+title = "D2.1 Weakest hBaker-shaped bound that closes Steiner 1-cycles given the current range; state as one named hypothesis"
+needs = ["KNOWN-002"]
+
+[[node]]
+id = "DIOPH-002"
+track = "Prove"
+status = "OPEN_SUBGOAL"
+title = "D2.2 Pick the most formalizable effective irrationality measure of log 3 / log 2 and write its exact statement and proof outline"
+needs = ["DIOPH-001"]
+
+[[node]]
+id = "DIOPH-003"
+track = "Prove"
+status = "OPEN_SUBGOAL"
+title = "D2.3 Formalize that irrationality measure (needs Mathlib); makes Steiner and Simons unconditional"
+needs = ["DIOPH-002"]
+
+[[node]]
+id = "STRUCT-001"
+track = "Core"
+status = "OPEN_SUBGOAL"
+title = "D3.1 Prove CollatzConjecture equivalent to the google-deepmind/formal-conjectures statement"
+needs = ["CORE-001"]
+
+[[node]]
+id = "STRUCT-002"
+track = "Core"
+status = "OPEN_SUBGOAL"
+title = "D3.2 Port besimelagh/collatz-lean (MIT) residue-class descent lemmas"
+needs = ["CORE-001"]
+
+[[node]]
+id = "STRUCT-003"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D3.3 Monks (2006): the conjecture holds iff it holds on any fixed arithmetic progression"
+needs = ["CORE-001"]
+
+[[node]]
+id = "STRUCT-004"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D3.4 Lagarias conjugacy to the shift and Bernstein inverse on Z_2 (needs Mathlib)"
+needs = ["CORE-004"]
+
+[[node]]
+id = "STRUCT-005"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D3.5 Yolcu-Aaronson-Heule string-rewriting equivalence and their certificates for weakened systems"
+needs = ["CORE-001"]
+
+[[node]]
+id = "DENS-001"
+track = "Known"
+status = "OPEN_SUBGOAL"
+title = "D4.1 Krasikov-style lower bound #{n <= x : n reaches 1} >= x^c (start with c = 3/7, aim for 0.84)"
+needs = ["KNOWN-001"]
+
+[[node]]
+id = "DISPROVE-004"
+track = "Disprove"
+status = "OPEN_SUBGOAL"
+title = "D5.1 Fast NontrivialCycleCert.returns checker via composed parity-vector affine maps"
+needs = ["DISPROVE-001", "CORE-003"]
+
+[[node]]
+id = "DISPROVE-005"
+track = "Disprove"
+status = "OPEN_SUBGOAL"
+title = "D5.2 CI job running an independent checker (lean4lean or nanoda) over the Disprove tree"
+needs = ["DISPROVE-001"]
+
+[[node]]
+id = "DISPROVE-006"
+track = "Search"
+status = "OPEN_SUBGOAL"
+title = "D5.3 Rerun Hercher (2023) with Barina's 2^71 range: does m <= 92 or more follow?"
+needs = []
