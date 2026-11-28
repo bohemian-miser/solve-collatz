@@ -30,7 +30,7 @@ An open-source, Lean 4 kernel-verified **dual-track research swarm** for the Col
 | `search/` | High-speed non-Lean search & automated red-team tools (`barrier_redteam.py`, `cycle_hunter.py`). |
 | `frontier/` | Living machine-readable Research DAG (`FRONTIER.toml`), `REFUTED.md`, and `BARRIERS.md`. |
 | `review/` | 5 adversarial review rubrics (`correctness`, `nontriviality`, `barrier-check`, `proof-quality`, `quality-pass`). |
-| `scripts/` | Hard CI guards (`check_challenge_frozen.py`, `check_source_guards.py`, `PrintAxioms.lean`) and atomic cooperative lease tool (`claim.sh`). |
+| `scripts/` | Hard CI guards (`check_challenge_frozen.py`, `check_source_guards.py`, `audit_axioms.py`), the local CI runner `check_all.py`, and atomic cooperative lease tool (`claim.sh`). |
 
 ---
 
@@ -47,10 +47,7 @@ An open-source, Lean 4 kernel-verified **dual-track research swarm** for the Col
 6. Want to run a dedicated-server adversarial reviewer bot or 24/7 swarm worker safely? See [`docs/SELF_HOSTED_AGENT.md`](docs/SELF_HOSTED_AGENT.md).
 7. Run all local gates before opening a PR:
    ```bash
-   python3 scripts/check_challenge_frozen.py origin/main HEAD
-   python3 scripts/check_source_guards.py
-   lake build
-   lake env lean scripts/PrintAxioms.lean
+   python3 scripts/check_all.py   # same steps as CI; --skip-search skips the slow search hook
    ```
 
 ---

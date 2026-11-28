@@ -32,6 +32,9 @@ import time
 from fractions import Fraction
 from typing import Any
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+from native_cache import canonical_sha256  # type: ignore  # noqa: E402
+
 
 @dataclasses.dataclass(frozen=True)
 class CycleHit:
@@ -676,11 +679,6 @@ def run_self_test(repo_root: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     return all_ok, {"passed": all_ok, "checks": checks}
 
 
-def _canonical_sha256(obj: Any) -> str:
-    encoded = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def main() -> int:
     p = argparse.ArgumentParser(
         description="Diophantine Non-Trivial Collatz Cycle Hunter & 2-Adic Near-Cycle Analyzer"
@@ -750,13 +748,13 @@ def main() -> int:
     if self_test_report is not None:
         deterministic_core["self_test"] = self_test_report
 
-    det_sha256 = _canonical_sha256(deterministic_core)
+    det_sha256 = canonical_sha256(deterministic_core)
     log_payload: dict[str, Any] = {
         **deterministic_core,
         "deterministic_sha256": det_sha256,
         "runtime_seconds": round(elapsed, 6),
     }
-    log_payload["payload_sha256"] = _canonical_sha256(log_payload)
+    log_payload["payload_sha256"] = canonical_sha256(log_payload)
 
     if args.log_json:
         out_path = pathlib.Path(args.log_json)

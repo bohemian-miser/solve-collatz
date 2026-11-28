@@ -6,7 +6,7 @@ Welcome! This repository is built for **humans and autonomous AI agent swarms** 
 
 ## 1. Hard Boundaries (CI-Enforced)
 
-1. **Never touch frozen files:** Every path listed in `problem.toml` (`[guards].frozen_files` — including `Challenge.lean`, `problem.toml`, `lean-toolchain`, `scripts/PrintAxioms.lean`, `scripts/check_challenge_frozen.py`, `scripts/check_source_guards.py`, and `.github/workflows/*.yml`) is human-owned and frozen. Verify locally against `origin/main` via `python3 scripts/check_challenge_frozen.py origin/main HEAD`.
+1. **Never touch frozen files:** Every path listed in `problem.toml` (`[guards].frozen_files` — including `Challenge.lean`, `problem.toml`, `lean-toolchain`, `scripts/audit_axioms.py`, `scripts/check_challenge_frozen.py`, `scripts/check_source_guards.py`, and `.github/workflows/*.yml`) is human-owned and frozen. Verify locally against `origin/main` via `python3 scripts/check_challenge_frozen.py origin/main HEAD`.
 2. **Zero `sorry` on `main`:** Every merged `.lean` file must compile with zero `sorry`, zero `admit`, zero `native_decide`, and axioms restricted strictly to `[propext, Classical.choice, Quot.sound]`. *(Open subgoals live in `frontier/FRONTIER.toml`, NOT as `sorry` files on `main`!)*
 3. **Zero forbidden escape hatches:** No `set_option`, no `maxHeartbeats` overrides, no `erw`, no `meta`/`unsafe`/`elab`/`run_tac`, and no double-quoted strings inside comments/docstrings.
 4. **Readability & anti-inlining norm:**
@@ -28,13 +28,32 @@ Welcome! This repository is built for **humans and autonomous AI agent swarms** 
    - Trivial restatements of `Challenge.lean` disguised as progress will be rejected.
 4. **Track B (`Disprove/`) Verification Standard:**
    - Off-kernel search engines in `search/` may use Python, Rust, C++, GPU, or SAT/SMT solvers.
-   - Compiled native search tools MUST use `scripts/native_cache.py` (`cached_binary_path` + `atomic_compile` into content-hashed `/tmp/<prefix>_<sha12>` paths; NEVER commit compiled binaries), serialize logs with strict RFC-8259 JSON (`dump_strict_json` / `allow_nan=False`), pass an `--asan` (`ASan+UBSan`) self-test, and verify multi-thread determinism (`t=1 == t=N` bit-for-bit `deterministic_sha256` JSON field computed via `canonical_sha256` over canonical payloads).
+   - Compiled native search tools MUST build and run through `search/engine.py` (`compile_c`, `run_json_engine`, `check_thread_determinism`; it uses `scripts/native_cache.py` to compile into content-hashed `/tmp/<prefix>_<sha12>` paths; NEVER commit compiled binaries), serialize logs with strict RFC-8259 JSON (`dump_strict_json` / `allow_nan=False`), pass an `--asan` (`ASan+UBSan`) self-test, and verify multi-thread determinism (`t=1 == t=N` bit-for-bit `deterministic_sha256` JSON field computed via `canonical_sha256` over canonical payloads).
    - Any claimed counterexample MUST compile into a **Lean-kernel-verified certificate** proving `Disproof` (zero `sorry`, zero `native_decide`).
    - Exhausted search ranges should be logged with exact reproducible parameters and bounds.
 
 ---
 
-## 3. Coordination & Review Protocol
+## 3. Agent Tooling
+
+Use these before writing your own. Each one replaces steps agents used to redo by hand.
+
+| Command | What it does |
+|---|---|
+| `python3 scripts/check_all.py` | Runs every CI step locally (frozen files, guards, build, axiom audit, search hook) and stops at the first failure. `--skip-search` skips the slow search hook. Run it before every push. |
+| `python3 scripts/audit_axioms.py` | Audits every declaration in the library; `--json` prints one row per declaration. No list to maintain. |
+| `search/engine.py` | Compile, run and determinism-check a C engine. Copy `search/example_engine/` to start a new one. |
+| `scripts/native_cache.py` | Content-hashed binary cache and strict JSON read/write. |
+| `python3 search/barrier_redteam.py --check-stopping-bound "<expr>"` | Tests a candidate bound or invariant against the `3n-1`, `5n+1` and negative-integer barrier maps before you try to prove it. |
+| `python3 search/cycle_hunter.py` | Exact 1/2/3-circuit cycle search and `log2(3)` convergents; emits a `NontrivialCycleCert` on a hit. |
+| `python3 search/glide_hunter/run_glide_hunter.py` | C engine for stopping-time, glide and record sweeps over ranges and Mersenne seeds. |
+| `python3 search/mcircuit_hunter/run_mcircuit_hunter.py` | C engine for exhaustive m-circuit sweeps (m = 2..7) and the convergent-window hunter. |
+
+**Add to this table as you go.** If you write a script or helper that another agent would otherwise rewrite (a search harness, a certificate emitter, a log checker, a way to find something in the repo quickly), put it in `scripts/` or `search/`, give it a `--self-test` that `search/ci_checks.sh` runs, and add a row here in the same PR. If it is not specific to this problem, open the PR against `solve-anything` so every instance gets it.
+
+---
+
+## 4. Coordination & Review Protocol
 
 - **One coherent unit per PR:** Never stack unmerged PRs. Rebase cleanly onto `main` and push with `git push --force-with-lease`.
 - **Zero-friction cooperative claims:** Before starting multi-hour work, comment `/claim <NODE_ID>` on the pinned **Frontier Claims** issue (or check `frontier.json` on GitHub Pages) so parallel swarms don't collide. Comment `/release <NODE_ID>` when finished or pivoting (leases auto-expire after 24h).

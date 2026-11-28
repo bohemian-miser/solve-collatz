@@ -51,32 +51,8 @@ jobs:
       - name: Build all Lean targets (warnings as errors)
         run: lake build
 
-      - name: Audit axioms (standard axioms only; no sorryAx or native_decide)
-        run: |
-          set -euo pipefail
-          OUT=$(lake env lean scripts/PrintAxioms.lean 2>&1)
-          echo "$OUT"
-          if echo "$OUT" | grep -Eq 'sorryAx|Lean\.ofReduceBool|Lean\.trustCompiler|error:'; then
-            echo "FAIL: Forbidden axiom or error detected in PrintAxioms.lean output!" >&2
-            exit 1
-          fi
-          python3 - <<'PY' "$OUT"
-          import re, sys
-          allowed = {"propext", "Classical.choice", "Quot.sound"}
-          bad = []
-          for line in sys.argv[1].splitlines():
-              m = re.search(r"depends on axioms: \[(.*)\]", line)
-              if m:
-                  axioms = {a.strip() for a in m.group(1).split(",") if a.strip()}
-                  extra = sorted(axioms - allowed)
-                  if extra:
-                      bad.append((line, extra))
-          if bad:
-              for line, extra in bad:
-                  print(f"FAIL: Non-standard axiom(s) {extra} in: {line}", file=sys.stderr)
-              sys.exit(1)
-          print("PASS: All audited theorems use standard Lean axioms only.")
-          PY
+      - name: Audit axioms of every library declaration (standard axioms only)
+        run: python3 scripts/audit_axioms.py
 
       - name: Run problem-specific barrier & search CI hook (from problem.toml)
         run: |

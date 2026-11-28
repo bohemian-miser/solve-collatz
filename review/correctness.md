@@ -6,7 +6,7 @@ Ensure the PR preserves the mathematical integrity of `Challenge.lean` and adds 
 ## Mandatory Checks
 
 1. **Frozen Challenge & Verification Files (`[S0]`)**
-   - Every file listed in `problem.toml` (`[guards].frozen_files`, including `Challenge.lean`, `scripts/PrintAxioms.lean`, and `.github/workflows/*.yml`) MUST be untouched — verify via `python3 scripts/check_challenge_frozen.py <base_ref> <head_ref>`.
+   - Every file listed in `problem.toml` (`[guards].frozen_files`, including `Challenge.lean`, `scripts/audit_axioms.py`, and `.github/workflows/*.yml`) MUST be untouched — verify via `python3 scripts/check_challenge_frozen.py <base_ref> <head_ref>`.
    - Any theorem claiming to prove the conjecture or its disproof MUST reference the exact frozen declarations in `problem.toml` (`conjecture_decl` / `disproof_decl`) — never a local redefinition.
 2. **Axiom Audit (`[S0]`)**
    - Every exported theorem must depend ONLY on Lean's standard foundational axioms (`propext`, `Classical.choice`, `Quot.sound`).

@@ -56,7 +56,7 @@ frozen_files = [
   "Challenge.lean",
   "problem.toml",
   "lean-toolchain",
-  "scripts/PrintAxioms.lean",
+  "scripts/audit_axioms.py",
   "scripts/check_challenge_frozen.py",
   "scripts/check_source_guards.py",
   ".github/workflows/verify.yml",
@@ -108,7 +108,6 @@ public import {lean_root}.Disprove.Cert
         "Challenge.lean",
         f"{lean_root}/Core/Basic.lean",
         f"{lean_root}/Disprove/Cert.lean",
-        "scripts/PrintAxioms.lean",
     ]:
         fp = pathlib.Path(rel)
         if fp.exists():
@@ -124,7 +123,7 @@ public import {lean_root}.Disprove.Cert
         f"Next steps:\n"
         f"  1. Edit `Challenge.lean` with your exact Lean 4 conjecture.\n"
         f"  2. Update `frontier/FRONTIER.toml` and `frontier/BARRIERS.md`.\n"
-        f"  3. Run `lake build && lake env lean scripts/PrintAxioms.lean && python3 scripts/check_source_guards.py`."
+        f"  3. Run `python3 scripts/check_all.py`."
     )
     return 0
 

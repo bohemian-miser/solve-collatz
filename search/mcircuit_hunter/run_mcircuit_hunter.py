@@ -34,9 +34,8 @@ for _p in (str(SCRIPTS_DIR), str(SEARCH_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from engine import check_thread_determinism, compile_c, run_json_engine  # type: ignore  # noqa: E402
 from native_cache import (  # type: ignore  # noqa: E402
-    atomic_compile,
-    cached_binary_path,
     canonical_sha256,
     dump_strict_json,
     loads_strict_json,
@@ -58,24 +57,8 @@ CW_K306_STRUCTURED_SLICES = (
 
 
 def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
-    """Compile `mcircuit_hunter.c` into `/tmp/` via `scripts/native_cache.py`."""
-    if not C_SOURCE.exists():
-        raise FileNotFoundError(f"Missing C source: {C_SOURCE}")
-    suffix = "_asan" if asan else ""
-    target = cached_binary_path("solve_collatz_mcircuit_hunter", [REPO_SEARCH_DIR], suffix=suffix)
-    cmd = [
-        "gcc",
-        "-O2" if asan else "-O3",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-std=c11",
-        "-pthread",
-    ]
-    if asan:
-        cmd.extend(["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
-    cmd.extend([str(C_SOURCE), "-lm", "-o", "{out}"])
-    return atomic_compile(cmd, target, force=force)
+    """Compile `mcircuit_hunter.c` into a content-hashed `/tmp` binary via `search/engine.py`."""
+    return compile_c("solve_collatz_mcircuit_hunter", C_SOURCE, hash_paths=[REPO_SEARCH_DIR], asan=asan, force=force)
 
 
 def emit_lean_cert(start: int, period: int) -> str:
@@ -174,10 +157,7 @@ def run_engine(
         cmd.append("--force-u512")
     if force_u1024:
         cmd.append("--force-u1024")
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode not in (0, 10):
-        raise RuntimeError(f"mcircuit_hunter exited with {res.returncode}:\n{res.stderr}")
-    data = loads_strict_json(res.stdout)
+    data = run_json_engine(bin_path, cmd[1:], ok_returncodes=(0, 10))
     hits = data["canonical"].get("hits", [])
     _resolve_pending_hits(hits)
     data["deterministic_sha256"] = canonical_sha256(data["canonical"])
@@ -279,10 +259,7 @@ def run_convergent_window(
     ]
     if force_u1024:
         cmd.append("--force-u1024")
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode not in (0, 10):
-        raise RuntimeError(f"mcircuit_hunter --convergent-window exited {res.returncode}:\n{res.stderr}")
-    c_data = loads_strict_json(res.stdout)
+    c_data = run_json_engine(bin_path, cmd[1:], ok_returncodes=(0, 10))
     c_canon = c_data["canonical"]
     c_hits = c_canon.get("hits", [])
     _resolve_pending_hits(c_hits)
