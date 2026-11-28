@@ -20,6 +20,7 @@ Lean 4's kernel is the **judge**, not the search engine. This directory hosts fa
 
 ## Extending `search/`
 
+- Build and run compiled engines through `search/engine.py` (`compile_c`, `run_json_engine`, `check_thread_determinism`); `search/example_engine/` is a minimal engine to copy.
 - Keep CI smoke-test modes fast (< 5 seconds) and deterministic.
 - Never claim a Track B discovery from raw search output alone: a finding only counts once Lean verifies `SolveCollatz.CollatzDisproof` with standard axioms only.
 - When a structured search family is exhausted or proven empty, record the exact range/family in `frontier/REFUTED.md` or formalize the ruling-out lemma in `Collatz/Known/`!

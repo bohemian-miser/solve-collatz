@@ -23,12 +23,12 @@ from typing import Any
 REPO_SEARCH_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = REPO_SEARCH_DIR.parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+for _p in (str(SCRIPTS_DIR), str(REPO_SEARCH_DIR.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
+from engine import check_thread_determinism, compile_c, run_json_engine  # type: ignore  # noqa: E402
 from native_cache import (  # type: ignore  # noqa: E402
-    atomic_compile,
-    cached_binary_path,
     canonical_sha256,
     dump_strict_json,
     loads_strict_json,
@@ -38,24 +38,8 @@ C_SOURCE = REPO_SEARCH_DIR / "glide_hunter.c"
 
 
 def ensure_compiled(asan: bool = False, force: bool = False) -> pathlib.Path:
-    """Compile `glide_hunter.c` into `/tmp/` via `scripts/native_cache.py`."""
-    if not C_SOURCE.exists():
-        raise FileNotFoundError(f"Missing C source: {C_SOURCE}")
-    suffix = "_asan" if asan else ""
-    target = cached_binary_path("solve_collatz_glide_hunter", [C_SOURCE], suffix=suffix)
-    cmd = [
-        "gcc",
-        "-O2" if asan else "-O3",
-        "-Wall",
-        "-Wextra",
-        "-Werror",
-        "-std=c11",
-        "-pthread",
-    ]
-    if asan:
-        cmd.extend(["-g", "-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
-    cmd.extend([str(C_SOURCE), "-lm", "-o", "{out}"])
-    return atomic_compile(cmd, target, force=force)
+    """Compile `glide_hunter.c` into a content-hashed `/tmp` binary via `search/engine.py`."""
+    return compile_c("solve_collatz_glide_hunter", C_SOURCE, asan=asan, force=force)
 
 
 def python_orbit_stats(n: int) -> tuple[int, int, int]:
@@ -192,17 +176,13 @@ def run_engine(
     if max_steps is not None:
         cmd.extend(["--max-steps", str(max_steps)])
 
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode != 0:
-        raise RuntimeError(f"glide_hunter exited with {res.returncode}:\n{res.stderr}")
-    data = loads_strict_json(res.stdout)
+    data = run_json_engine(bin_path, cmd[1:])
     canon = data["canonical"]
     if verify_python:
         if "mode1_range" in canon:
             verify_mode1_records_python(canon["mode1_range"])
         if "mode2_mersenne" in canon:
             verify_mode2_samples_python(canon["mode2_mersenne"])
-    data["deterministic_sha256"] = canonical_sha256(canon)
     return data
 
 
@@ -286,14 +266,11 @@ def run_self_test(range_end: int, sieve_bits: int, asan: bool = False) -> dict[s
             raise AssertionError(f"Sieve equivalence failed for --sieve-bits {sb}")
 
     # Multi-thread determinism proof crossing SEQ_CUTOFF (1..1,500,000)
-    d1 = run_engine(
-        range_end=1_500_000, mersenne_max=60, threads=1, sieve_bits=sieve_bits, asan=asan
-    )["deterministic_sha256"]
-    d4 = run_engine(
-        range_end=1_500_000, mersenne_max=60, threads=4, sieve_bits=sieve_bits, asan=asan
-    )["deterministic_sha256"]
-    if d1 != d4:
-        raise AssertionError(f"Non-deterministic canonical digest (t=1 vs t=4): {d1} != {d4}")
+    d1 = check_thread_determinism(
+        lambda t: run_engine(
+            range_end=1_500_000, mersenne_max=60, threads=t, sieve_bits=sieve_bits, asan=asan
+        )
+    )
 
     # Explicit budget diagnostic check (zero silent truncation on --max-steps 20 for n=27)
     bin_path = ensure_compiled(asan=asan)

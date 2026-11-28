@@ -3,7 +3,7 @@
 Every `solve-anything` repository uses a **strict two-plane architecture**:
 
 1. **Plane 1 — Public GitHub Actions (Zero AI Secrets):**
-   - `.github/workflows/verify.yml` runs on every PR with `permissions: contents: read` only, enforcing frozen `Challenge.lean` / `problem.toml`, source hygiene, `lake build` (`warningAsError = true`), standard-axioms-only auditing (`PrintAxioms.lean`), and `search/ci_checks.sh`.
+   - `.github/workflows/verify.yml` runs on every PR with `permissions: contents: read` only, enforcing frozen `Challenge.lean` / `problem.toml`, source hygiene, `lake build` (`warningAsError = true`), standard-axioms-only auditing (`scripts/audit_axioms.py`, every declaration), and `search/ci_checks.sh`.
    - `.github/workflows/claims.yml` arbitrates `/claim <NODE_ID>`, `/release <NODE_ID>`, and `/status` comments on the pinned **Frontier Claims** issue and auto-expires stale 24h leases every 6 hours.
    - `.github/workflows/dashboard.yml` publishes the live Frontier DAG and `frontier.json` to GitHub Pages on every merge to `main`.
 

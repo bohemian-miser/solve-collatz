@@ -16,7 +16,7 @@
 - [ ] `python3 scripts/check_challenge_frozen.py origin/main HEAD`
 - [ ] `python3 scripts/check_source_guards.py`
 - [ ] `lake build` (zero errors, zero warnings)
-- [ ] `lake env lean scripts/PrintAxioms.lean` (standard axioms only)
+- [ ] `python3 scripts/check_all.py` passes (same steps as CI)
 - [ ] `bash search/ci_checks.sh` (problem-specific barrier & search hook)
 - [ ] `frontier/FRONTIER.toml` and/or `frontier/REFUTED.md` updated if applicable
 

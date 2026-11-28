@@ -12,7 +12,7 @@ DEFAULT_FROZEN = {
     "Challenge.lean",
     "problem.toml",
     "lean-toolchain",
-    "scripts/PrintAxioms.lean",
+    "scripts/audit_axioms.py",
     "scripts/check_challenge_frozen.py",
     "scripts/check_source_guards.py",
     ".github/workflows/verify.yml",
