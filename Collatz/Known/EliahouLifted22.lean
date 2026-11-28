@@ -144,7 +144,7 @@ def isPruned (r cur p3 p2 : Nat) : Bool :=
     (Nat.ble (Nat.add (Nat.add cur p3) 1) (Nat.add r p2))
 
 /-- Equivalence of `isPruned r cur p3 p2 = true` with `p3 < p2 ∧ cur + p3 < r + p2`. -/
-private theorem isPruned_iff (r cur p3 p2 : Nat) :
+theorem isPruned_iff (r cur p3 p2 : Nat) :
     isPruned r cur p3 p2 = true ↔ p3 < p2 ∧ cur + p3 < r + p2 := by
   unfold isPruned
   cases hb : Nat.ble (Nat.add p3 1) p2
@@ -199,7 +199,7 @@ def checkTop (lo hi fuel rem r cur p3 p2 : Nat) : Bool :=
 
 /-- Pruned residue class soundness: `0 < k`, `3^c < 2^k`, and `terrasIter k r + 3^c < r + 2^k`
 forces `HasFiniteStoppingTime n` for every `n ≥ 2^k` with `n % 2^k = r`. -/
-private theorem terras_drop_of_pruned {k r n : Nat} (hk : 0 < k) (hmod : n % 2 ^ k = r)
+theorem terras_drop_of_pruned {k r n : Nat} (hk : 0 < k) (hmod : n % 2 ^ k = r)
     (hn : 2 ^ k ≤ n) (hp : 3 ^ countOnes (terrasParityVec k r) < 2 ^ k)
     (hdrop : terrasIter k r + 3 ^ countOnes (terrasParityVec k r) < r + 2 ^ k) :
     HasFiniteStoppingTime n := by
@@ -219,7 +219,7 @@ private theorem terras_drop_of_pruned {k r n : Nat} (hk : 0 < k) (hmod : n % 2 ^
 
 /-- Exact shell identity: for `2^k ≤ n < 2^(k + 1)` with `n % 2^k = r`, we have
 `n = r + 2^k` and `terrasIter k n = terrasIter k r + 3^c`. -/
-private theorem terras_shell_eq {k r n : Nat} (hmod : n % 2 ^ k = r)
+theorem terras_shell_eq {k r n : Nat} (hmod : n % 2 ^ k = r)
     (hlo : 2 ^ k ≤ n) (hhi : n < 2 ^ (k + 1)) :
     n = r + 2 ^ k ∧ terrasIter k n = terrasIter k r + 3 ^ countOnes (terrasParityVec k r) := by
   have hkpos : 0 < 2 ^ k := Nat.two_pow_pos k
@@ -236,7 +236,7 @@ private theorem terras_shell_eq {k r n : Nat} (hmod : n % 2 ^ k = r)
   exact ⟨hn_eq, hiter⟩
 
 /-- Left-child parity/iterate update for `r` at depth `k + 1`. -/
-private theorem terras_child_left (k r : Nat) :
+theorem terras_child_left (k r : Nat) :
     (terrasIter k r % 2 = 0 →
       terrasIter (k + 1) r = terrasIter k r / 2 ∧
       3 ^ countOnes (terrasParityVec (k + 1) r) = 3 ^ countOnes (terrasParityVec k r)) ∧
@@ -261,7 +261,7 @@ private theorem terras_child_left (k r : Nat) :
     simp [countOnes, Nat.pow_succ, Nat.mul_comm]
 
 /-- Right-child parity/iterate update for `r + 2^k` at depth `k + 1`. -/
-private theorem terras_child_right (k r : Nat) :
+theorem terras_child_right (k r : Nat) :
     let cp3 := terrasIter k r + 3 ^ countOnes (terrasParityVec k r)
     let p3 := 3 ^ countOnes (terrasParityVec k r)
     (terrasIter k r % 2 = 0 →
@@ -297,7 +297,7 @@ private theorem terras_child_right (k r : Nat) :
     simp [countOnes]
 
 /-- Helper unpacking `n % 2^(k + 1)` into `n % 2^k` or `n % 2^k + 2^k`. -/
-private theorem mod_two_pow_succ_split (n k : Nat) :
+theorem mod_two_pow_succ_split (n k : Nat) :
     n % 2 ^ (k + 1) = n % 2 ^ k ∨ n % 2 ^ (k + 1) = n % 2 ^ k + 2 ^ k := by
   have hkpos := Nat.two_pow_pos k
   have hpow : 2 ^ (k + 1) = 2 * 2 ^ k := by rw [Nat.pow_succ, Nat.mul_comm]
@@ -317,7 +317,7 @@ private theorem mod_two_pow_succ_split (n k : Nat) :
     conv => lhs; rw [heq, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt (by omega)]
 
 /-- Soundness of `stepChildren` when `isPruned = false`. -/
-private theorem stepChildren_children_sound (ih : Nat → Nat → Nat → Nat → Bool) (k r : Nat)
+theorem stepChildren_children_sound (ih : Nat → Nat → Nat → Nat → Bool) (k r : Nat)
     (hbranch : (let p2' := Nat.mul 2 (2 ^ k)
       let cp3 := Nat.add (terrasIter k r) (3 ^ countOnes (terrasParityVec k r))
       let rp2 := Nat.add r (2 ^ k)
@@ -357,7 +357,7 @@ private theorem stepChildren_children_sound (ih : Nat → Nat → Nat → Nat �
       rw [h1, h2, h3, h4, ← h2pow]; exact ⟨hL, hbranch⟩
 
 /-- Full soundness of `stepChildren` for `0 < k` and `n ≥ 2^(k + 1)` with invariant `P`. -/
-private theorem stepChildren_sound (M : Nat) (P : Nat → Prop) (ih : Nat → Nat → Nat → Nat → Bool)
+theorem stepChildren_sound (M : Nat) (P : Nat → Prop) (ih : Nat → Nat → Nat → Nat → Bool)
     {k : Nat} (hih : ∀ r' : Nat, r' < 2 ^ (k + 1) →
       ih r' (terrasIter (k + 1) r')
         (3 ^ countOnes (terrasParityVec (k + 1) r')) (2 ^ (k + 1)) = true →
@@ -384,7 +384,7 @@ private theorem stepChildren_sound (M : Nat) (P : Nat → Prop) (ih : Nat → Na
     exact terras_drop_of_pruned hk hmod hnk h32 hlt
 
 /-- Soundness of `checkLeaf` on `[2^k, 2^(k + 1))`. -/
-private theorem checkLeaf_sound (fuel k r : Nat) (hk : 0 < k)
+theorem checkLeaf_sound (fuel k r : Nat) (hk : 0 < k)
     (hchk : checkLeaf fuel r (terrasIter k r)
       (3 ^ countOnes (terrasParityVec k r)) (2 ^ k) = true) :
     ∀ n : Nat, 2 ^ k ≤ n → n < 2 ^ (k + 1) → n % 2 ^ k = r → HasFiniteStoppingTime n := by

@@ -21,6 +21,9 @@ public import Collatz.Known.CycleLengthBounds
 public import Collatz.Known.EliahouConvergents
 public import Collatz.Known.EliahouLifted
 public import Collatz.Known.EliahouLifted22
+public import Collatz.Known.Range
+public import Collatz.Known.RangeCheck
+public import Collatz.Known.RangeCycleBounds
 public import Collatz.Prove.Diophantine.TwoCircuit
 public import Collatz.Known.TaoBridge
 public import Collatz.Prove.Diophantine.ThreeCircuit

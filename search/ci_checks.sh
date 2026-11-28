@@ -40,3 +40,6 @@ python3 search/glide_hunter/run_glide_hunter.py --self-test --range-end 100000 -
 
 echo "=== Track B C11 M-Circuit Hunter Self-Test (m=2..7, u128/u256/u512/u1024 + Mode 2 CF) ==="
 python3 search/mcircuit_hunter/run_mcircuit_hunter.py --self-test --threads 4
+
+echo "=== Range certificate generator: profiler vs Python model of rangeWalk ==="
+python3 search/range_cert/gen_shells.py --self-test

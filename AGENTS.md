@@ -48,6 +48,7 @@ Use these before writing your own. Each one replaces steps agents used to redo b
 | `python3 search/cycle_hunter.py` | Exact 1/2/3-circuit cycle search and `log2(3)` convergents; emits a `NontrivialCycleCert` on a hit. |
 | `python3 search/glide_hunter/run_glide_hunter.py` | C engine for stopping-time, glide and record sweeps over ranges and Mersenne seeds. |
 | `python3 search/mcircuit_hunter/run_mcircuit_hunter.py` | C engine for exhaustive m-circuit sweeps (m = 2..7) and the convergent-window hunter. |
+| `python3 search/range_cert/gen_shells.py --to <b>` | Generates kernel range-check modules proving every `2 ≤ n < 2^b` has finite stopping time (one `decide +kernel` bucket per module, so Lake checks them in parallel). Cost is about 0.7 ms of kernel time per sieve survivor; `search/range_cert/shell_profile.c` counts survivors per shell. |
 
 **Add to this table as you go.** If you write a script or helper that another agent would otherwise rewrite (a search harness, a certificate emitter, a log checker, a way to find something in the repo quickly), put it in `scripts/` or `search/`, give it a `--self-test` that `search/ci_checks.sh` runs, and add a row here in the same PR. If it is not specific to this problem, open the PR against `solve-anything` so every instance gets it.
 
